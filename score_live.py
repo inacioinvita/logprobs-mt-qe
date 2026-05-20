@@ -26,6 +26,7 @@ def request_prompt_logprobs(
     prompt: str,
     api_key: str | None,
     timeout: int,
+    n: int = 1,
 ) -> dict:
     payload = {
         "model": model,
@@ -35,6 +36,7 @@ def request_prompt_logprobs(
         "logprobs": True,
         "top_logprobs": 5,
         "prompt_logprobs": 5,
+        "n": n,
     }
     body = json.dumps(payload).encode("utf-8")
     headers = {"Content-Type": "application/json"}
@@ -62,8 +64,13 @@ def score_hypothesis(
     marker: str,
     api_key: str | None = None,
     timeout: int = 300,
+    n: int = 1,
 ) -> dict:
-    """Call API and return {response, tokens, aggregates}."""
+    """
+    Call API and return {response, tokens, aggregates}.
+
+    Currently uses first completion when n > 1; use --n 1 for deterministic scoring.
+    """
     prompt = build_scoring_prompt(source, hypothesis, lang)
     data = request_prompt_logprobs(
         base_url=base_url,
@@ -71,6 +78,7 @@ def score_hypothesis(
         prompt=prompt,
         api_key=api_key,
         timeout=timeout,
+        n=n,
     )
     tokens, agg = scores_from_response(
         data, marker=marker, hypothesis=hypothesis
@@ -95,6 +103,12 @@ def main() -> int:
     )
     parser.add_argument("--timeout", type=int, default=300, help="HTTP timeout seconds")
     parser.add_argument(
+        "--n",
+        type=int,
+        default=1,
+        help="Number of completions to generate",
+    )
+    parser.add_argument(
         "--save-json",
         type=str,
         default=None,
@@ -117,6 +131,7 @@ def main() -> int:
             marker=args.marker,
             api_key=args.api_key,
             timeout=args.timeout,
+            n=args.n,
         )
     except ConnectionError as exc:
         print(f"ERROR: {exc}", file=sys.stderr)

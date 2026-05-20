@@ -59,6 +59,12 @@ def main() -> int:
     parser.add_argument("--marker", default=None)
     parser.add_argument("--timeout", type=int, default=300)
     parser.add_argument(
+        "--n",
+        type=int,
+        default=1,
+        help="Number of completions to generate",
+    )
+    parser.add_argument(
         "--from-json",
         metavar="DIR",
         help="Directory of saved vLLM JSON responses (one per candidate, *.json)",
@@ -94,6 +100,7 @@ def main() -> int:
                     marker=args.marker,
                     api_key=args.api_key,
                     timeout=args.timeout,
+                    n=args.n,
                 )
             except ConnectionError as exc:
                 print(f"ERROR scoring {label}: {exc}", file=sys.stderr)
