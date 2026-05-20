@@ -40,7 +40,7 @@ def main() -> int:
     parser = argparse.ArgumentParser(
         description="Rank translation candidates by mean prompt logprob on the same source.",
     )
-    parser.add_argument("--source", help="English source (required for live API mode)")
+    parser.add_argument("--source", help="Source segment (required for live API mode)")
     parser.add_argument(
         "--candidates",
         metavar="FILE",
@@ -52,11 +52,11 @@ def main() -> int:
         default=None,
         help="Hypothesis string (repeatable)",
     )
-    parser.add_argument("--lang", default="German", help="Target language in prompt")
+    parser.add_argument("--lang", default=None, required=True, help="Target language in prompt")
     parser.add_argument("--base-url", default=DEFAULT_BASE_URL)
     parser.add_argument("--model", default=DEFAULT_MODEL)
     parser.add_argument("--api-key", default=None)
-    parser.add_argument("--marker", default="German translation:")
+    parser.add_argument("--marker", default=None)
     parser.add_argument("--timeout", type=int, default=300)
     parser.add_argument(
         "--from-json",
@@ -64,6 +64,8 @@ def main() -> int:
         help="Directory of saved vLLM JSON responses (one per candidate, *.json)",
     )
     args = parser.parse_args()
+    if args.marker is None:
+        args.marker = f"{args.lang} translation:"
 
     rows: list[tuple[str, dict, str]] = []
 

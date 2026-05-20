@@ -1,54 +1,68 @@
-# Gemma-4 logprob tooling (MT/QE)
+# logprob-qe
 
-Small scripts to score machine translation hypotheses with **prompt logprobs** from **local vLLM** on spark-240.
+Small scripts for **hypothesis-level quality estimation** of machine translations using `prompt_logprobs` from any OpenAI-compatible LLM server (vLLM, llama.cpp, Ollama, etc.).
 
-**Not a cloud API** — OpenAI-compatible JSON over HTTP on the LAN (`http://10.0.1.240:8001`), model `google/gemma-4-26B-A4B-it`, weights on GPU. No API key. For production LoRA MT use DGX-05 (`TRANSLATION_API.md`); this folder is for Gemma-4 logprob/QE experiments only.
+The idea: teacher-force a translation hypothesis into the prompt and read the token logprobs assigned by the model. Higher mean logprob → the model finds the hypothesis more plausible → lightweight reference-free QE proxy.
 
 ## Quick start
 
 ```bash
-cd /home/admin/logprob
-
-# Score a saved API response (pass --hypothesis for aligned token matching)
+# Score a hypothesis from a saved API response
 python3 score_json.py QElogprob.json \
-  --hypothesis "Der Zauberer wirkt einen mächtigen Zauberspruch."
+  --hypothesis "Der Zauberer wirkt einen mächtigen Zauberspruch." \
+  --marker "German translation:"
 
-# Good vs bad comparison (QElogprob.json + live API)
-python3 analyse_qe_sample.py
-
-# Live score one hypothesis
+# Live score — teacher-force a hypothesis against a running vLLM server
 python3 score_live.py \
+  --base-url http://localhost:8000/v1/chat/completions \
+  --model <your-model-id> \
+  --lang German \
   --source "The wizard casts a powerful spell." \
   --hypothesis "Der Zauberer wirkt einen mächtigen Zauberspruch."
 
-# Rank candidates (higher mean_logprob = more plausible under the model)
+# Rank multiple candidates (higher mean_logprob wins)
 python3 compare_candidates.py \
+  --base-url http://localhost:8000/v1/chat/completions \
+  --model <your-model-id> \
+  --lang German \
   --source "The wizard casts a powerful spell." \
   --hypothesis "Der Zauberer wirkt einen mächtigen Zauberspruch." \
   --hypothesis "Der Zauberer wirft einen schwachen Zauber."
+
+# Good vs bad demo (reads QElogprob.json + calls live API for the bad hypothesis)
+python3 example_qe.py \
+  --base-url http://localhost:8000/v1/chat/completions \
+  --model <your-model-id>
 ```
+
+## How it works
+
+1. Build a prompt: `Translate the following <source-lang> text to <target-lang>:\n\n<source>\n\n<lang> translation: <hypothesis>`
+2. Send to the LLM with `prompt_logprobs: N` and `max_tokens: 1`.
+3. Walk the returned `prompt_logprobs` array; locate the marker (`<lang> translation:`); extract per-token logprobs after it.
+4. Aggregate: mean, sum, perplexity proxy.
+
+No generation happens — the hypothesis is forced as prompt text and scored in one forward pass.
 
 ## Metrics
 
+| Field              | Meaning                                                    |
+| ------------------ | ---------------------------------------------------------- |
+| `mean_logprob`     | Average log P(token \| context) over hypothesis tokens     |
+| `sum_logprob`      | Sum of token logprobs                                      |
+| `perplexity_proxy` | `exp(-mean_logprob)` — lower is better                     |
+| `n_tokens`         | Hypothesis token count (after marker)                      |
+| `min_logprob`      | Worst single-token logprob                                 |
+| `max_logprob`      | Best single-token logprob                                  |
 
-| Field              | Meaning                                                       |
-| ------------------ | ------------------------------------------------------------- |
-| `mean_logprob`     | Average log P(token | context) over hypothesis tokens         |
-| `sum_logprob`      | Sum of token logprobs                                         |
-| `perplexity_proxy` | `exp(-mean_logprob)` — lower is better                        |
-| `n_tokens`         | Hypothesis token count (after marker, default `translation:`) |
-
-
-## Local vLLM request (OpenAI-compatible JSON)
-
-POST to `http://10.0.1.240:8001/v1/chat/completions` — same field names as OpenAI Chat Completions, executed on spark-240.
+## Curl example
 
 ```bash
-curl -sS -X POST 'http://10.0.1.240:8001/v1/chat/completions' \
+curl -sS -X POST 'http://localhost:8000/v1/chat/completions' \
   -H 'Content-Type: application/json' \
   -d '{
-    "model": "google/gemma-4-26B-A4B-it",
-    "messages": [{"role": "user", "content": "Translate ...\n\nGerman translation: <hypothesis>"}],
+    "model": "<your-model-id>",
+    "messages": [{"role": "user", "content": "Translate the following text to German:\n\nThe wizard casts a powerful spell.\n\nGerman translation: Der Zauberer wirkt einen mächtigen Zauberspruch."}],
     "temperature": 0,
     "max_tokens": 1,
     "logprobs": true,
@@ -57,17 +71,12 @@ curl -sS -X POST 'http://10.0.1.240:8001/v1/chat/completions' \
   }'
 ```
 
-**Response (truncated)** — full example: `QElogprob.json`.
+Save the response to a `.json` file and pass it to `score_json.py` with `--hypothesis`.
+
+**Response structure (truncated)** — full example: `QElogprob.json`.
 
 ```json
 {
-  "model": "google/gemma-4-26B-A4B-it",
-  "choices": [{
-    "message": { "content": "..." },
-    "logprobs": {
-      "content": [{ "token": "...", "logprob": -0.26, "top_logprobs": [...] }]
-    }
-  }],
   "prompt_logprobs": [
     null,
     { "138932": { "rank": 1, "logprob": -0.30, "decoded_token": " wirkt" },
@@ -76,26 +85,38 @@ curl -sS -X POST 'http://10.0.1.240:8001/v1/chat/completions' \
 }
 ```
 
-Parse with `score_json.py` + `--hypothesis`; see `~/knowledge-base/private_docs/GEMMA4_LOGPROB_QE_2026-05-19.md`.
-
 ## Files
 
+| File                     | Role                                                              |
+| ------------------------ | ----------------------------------------------------------------- |
+| `lib_prompt_logprobs.py` | Core library: parse `prompt_logprobs`, aggregate scores           |
+| `score_json.py`          | CLI — score a saved JSON response                                 |
+| `score_live.py`          | CLI — teacher-force a hypothesis against a live API               |
+| `compare_candidates.py`  | CLI — rank multiple hypotheses on one source                      |
+| `example_qe.py`          | Demo — good vs bad German hypothesis comparison                   |
+| `QElogprob.json`         | Saved vLLM response for the wizard example (good hypothesis)      |
 
-| File                     | Role                                           |
-| ------------------------ | ---------------------------------------------- |
-| `lib_prompt_logprobs.py` | Parse vLLM `prompt_logprobs`, aggregate scores |
-| `score_json.py`          | CLI for saved JSON responses                   |
-| `score_live.py`          | CLI for live API scoring                       |
-| `compare_candidates.py`  | Rank multiple hypotheses on one source         |
+## Compatible servers
 
+Any server that returns `prompt_logprobs` in the OpenAI chat completions format:
+
+- **vLLM** — native support, pass `"prompt_logprobs": N` in the request body
+- **llama.cpp server** — supports `prompt_logprobs` via OpenAI-compatible endpoint
+- **Ollama** — check your version; `prompt_logprobs` support varies
+- Any other OpenAI-compatible endpoint that honours the `prompt_logprobs` field
 
 ## Notes
 
-- Uses **stdlib only** (no pip install on host).
-- Scoring window starts after `--marker` (default `translation:`; matches `German translation:`).
-- When the forced prompt token is not top-1, vLLM returns it with a high `rank` value; the library prefers that entry over rank-1.
+- Uses **stdlib only** — no `pip install` required.
+- Scoring window starts after `--marker` (defaults to `<lang> translation:` in live scripts).
+- When the forced prompt token is not top-1, vLLM returns it with a high `rank` value; the library selects that entry over rank-1.
 - Stops at chat-template tokens (`<|channel>`, `thought`, double newline after sentence end).
 - `compare_candidates.py --from-json DIR` scores pre-saved `*.json` responses without calling the API.
-- Pass **`--hypothesis`** (or use `score_live.py` / `compare_candidates.py`) so tokens align to the forced target text; naive rank==1-only parsing mis-reads vLLM output.
-- Logprob QE measures **model plausibility**, not human adequacy — see `~/knowledge-base/private_docs/GEMMA4_LOGPROB_QE_2026-05-19.md`.
+- Always pass `--hypothesis` (or use `score_live.py` / `compare_candidates.py`) so tokens align to the forced target text; naive rank==1-only parsing can mis-read vLLM output.
 
+## Limitations
+
+- **Model plausibility, not human adequacy** — a fluent but unfaithful translation can outscore a correct one if the model finds it more "natural".
+- **Prompt format matters** — logprob scores are relative to the exact prompt template used. Compare only hypotheses scored with the same prompt.
+- **vLLM `prompt_logprobs` differs from generation logprobs** — the JSON structure uses token-id keys, not a flat list; this library handles that format.
+- **Forced tokens may not appear in top-k** — always pass `--hypothesis` so the library can locate the exact forced-token entry regardless of rank.

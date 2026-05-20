@@ -7,8 +7,8 @@ import math
 import re
 from typing import Any
 
-DEFAULT_BASE_URL = "http://10.0.1.240:8001/v1/chat/completions"
-DEFAULT_MODEL = "google/gemma-4-26B-A4B-it"
+DEFAULT_BASE_URL = "http://localhost:8000/v1/chat/completions"
+DEFAULT_MODEL = ""
 
 _TEMPLATE_STOP = re.compile(
     r"^(\s*|\n+|<\|[^>]*\|>|<channel\|?>?|thought|model|user|never)$",
@@ -132,7 +132,8 @@ def _find_marker_end_index(prompt_logprobs: list[Any], marker: str) -> int:
     if last_rank1_end >= 0:
         return last_rank1_end
 
-    # 2) Scan for "German" + "translation" + ":" across nearby positions (any rank).
+    # 2) Scan for first word of marker + "translation" + ":" across nearby positions (any rank).
+    first_word = marker.lower().split()[0]
     last_end = -1
     for i, pos in enumerate(prompt_logprobs):
         if not pos:
@@ -142,7 +143,7 @@ def _find_marker_end_index(prompt_logprobs: list[Any], marker: str) -> int:
             for info in pos.values()
             if isinstance(info, dict)
         ]
-        has_german = any("german" in d.lower() for d in decoded)
+        has_german = any(first_word in d.lower() for d in decoded)
         has_trans = any("translation" in d.lower() for d in decoded)
         if not (has_german or has_trans):
             continue
@@ -269,7 +270,7 @@ def hypothesis_text(hypothesis: list[tuple[str, float]]) -> str:
 
 
 def build_scoring_prompt(source: str, hypothesis: str, lang: str) -> str:
-    """User message: source + marker + hypothesis (for teacher-forced logprobs)."""
+    """Build the scoring prompt with source and hypothesis for teacher-forced logprob extraction."""
     return (
         f"Translate the following English text to {lang}:\n\n"
         f"{source.strip()}\n\n"

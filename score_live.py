@@ -82,16 +82,16 @@ def main() -> int:
     parser = argparse.ArgumentParser(
         description="Teacher-force a hypothesis and score prompt token logprobs.",
     )
-    parser.add_argument("--source", required=True, help="English source segment")
+    parser.add_argument("--source", required=True, help="Source segment")
     parser.add_argument("--hypothesis", required=True, help="Target hypothesis to score")
-    parser.add_argument("--lang", default="German", help="Target language name in prompt")
+    parser.add_argument("--lang", default=None, help="Target language name in prompt (required)")
     parser.add_argument("--base-url", default=DEFAULT_BASE_URL, help="Chat completions URL")
     parser.add_argument("--model", default=DEFAULT_MODEL, help="Model id")
     parser.add_argument("--api-key", default=None, help="Optional Bearer token")
     parser.add_argument(
         "--marker",
-        default="German translation:",
-        help='Marker before hypothesis in prompt (default: "German translation:")',
+        default=None,
+        help='Marker before hypothesis in prompt (default: "<lang> translation:")',
     )
     parser.add_argument("--timeout", type=int, default=300, help="HTTP timeout seconds")
     parser.add_argument(
@@ -102,6 +102,10 @@ def main() -> int:
         help="Optional path to write raw API response",
     )
     args = parser.parse_args()
+    if args.lang is None:
+        parser.error("--lang is required")
+    if args.marker is None:
+        args.marker = f"{args.lang} translation:"
 
     try:
         result = score_hypothesis(

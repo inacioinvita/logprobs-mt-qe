@@ -18,8 +18,8 @@ def main() -> int:
     parser.add_argument("response_json", type=Path, help="Path to chat completion JSON")
     parser.add_argument(
         "--marker",
-        default="German translation:",
-        help='Substring after which hypothesis tokens begin (default: "German translation:")',
+        default="translation:",
+        help='Substring after which hypothesis tokens begin (default: "translation:")',
     )
     parser.add_argument(
         "--hypothesis",
