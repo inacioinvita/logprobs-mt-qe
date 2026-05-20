@@ -10,4 +10,6 @@ jobs:
           python-version: "3.11"
       - name: Syntax check
         run: |
-          for f in *.py; do python3 -m py_compile "$f" && echo "OK: $f"; done
+          for f in mt/*.py qe/*.py demos/mt/*.py demos/qe/*.py; do
+            python3 -m py_compile "$f" && echo "OK: $f"
+          done

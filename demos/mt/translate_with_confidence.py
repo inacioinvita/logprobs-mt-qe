@@ -1,33 +1,29 @@
 #!/usr/bin/env python3
-"""07 — Translate with confidence: generation logprob QE.
+"""Translate with confidence: generation logprob scoring.
 
 Generation logprobs score the model's OWN output — no hypothesis needed.
-This is the simplest QE: translate and immediately know how confident the
-model is.
+Translate and immediately know how confident the model is.
 
-Unlike prompt_logprobs (examples 01–06), which teacher-force a *fixed*
-hypothesis and measure how plausible the model finds it, generation logprobs
-come free with every translation call.  The ``choices[0].logprobs.content``
-array contains one entry per generated token, each with a logprob and top-k
-alternatives.
+Unlike prompt_logprobs (QE demos), which teacher-force a *fixed* hypothesis
+and measure how plausible the model finds it, generation logprobs come free
+with every translation call.
 
-Key concepts demonstrated:
+Key concepts:
   - Confidence score: sigmoid mapping from mean logprob to 0–1.
-  - Ambiguous tokens: close margin between top-1 and top-2 — a translator
-    might want to check the alternatives.
+  - Ambiguous tokens: close margin between top-1 and top-2.
   - Low-confidence spans: contiguous regions where the model struggled.
 
 Offline demo
 ------------
-Runs against a hard-coded mock response (no server needed).  Execute::
+Runs against a hard-coded mock response (no server needed)::
 
-    python3 examples/07_translate_with_confidence.py
+    python3 demos/mt/translate_with_confidence.py
 
 Live demo
 ---------
 Calls a real API endpoint::
 
-    python3 examples/07_translate_with_confidence.py --live \\
+    python3 demos/mt/translate_with_confidence.py --live \\
       --base-url http://localhost:8000/v1/chat/completions \\
       --model <model-id>
 """
@@ -36,9 +32,11 @@ from __future__ import annotations
 
 import argparse
 import sys
-import os
+from pathlib import Path
 
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
+_ROOT = str(Path(__file__).resolve().parent.parent.parent)
+sys.path.insert(0, _ROOT)
+sys.path.insert(0, str(Path(_ROOT) / "mt"))
 
 from lib_mt_confidence import (
     confidence_score,
@@ -47,13 +45,6 @@ from lib_mt_confidence import (
     format_confidence_report,
     generation_tokens_from_response,
 )
-
-# ---------------------------------------------------------------------------
-# Mock response — "Der Zauberer wirkt einen mächtigen Zauberspruch."
-#
-# Tokenisation follows a typical BPE split.  One token (" wirkt") has a
-# deliberately close runner-up (" spricht") to trigger ambiguity flagging.
-# ---------------------------------------------------------------------------
 
 MOCK_RESPONSE = {
     "choices": [{
@@ -108,7 +99,6 @@ MOCK_RESPONSE = {
                     ],
                 },
                 {
-                    # Ambiguous: " wirkt" vs " spricht" — margin 0.82
                     "token": " wirkt",
                     "logprob": -0.42,
                     "top_logprobs": [
@@ -253,7 +243,7 @@ def run_live_demo(
 
 
 def main() -> None:
-    ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
+    ap = argparse.ArgumentParser(description="Translate with confidence scoring demo")
     ap.add_argument("--live", action="store_true", help="Call a real API instead of using mock data")
     ap.add_argument("--base-url", default="http://localhost:8000/v1/chat/completions")
     ap.add_argument("--model", default="")

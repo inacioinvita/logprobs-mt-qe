@@ -16,7 +16,9 @@ import json
 import sys
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+_ROOT = str(Path(__file__).resolve().parent.parent.parent)
+sys.path.insert(0, _ROOT)
+sys.path.insert(0, str(Path(_ROOT) / "qe"))
 
 from lib_prompt_logprobs import (
     _find_marker_end_index,
@@ -24,7 +26,7 @@ from lib_prompt_logprobs import (
     top_logprobs_from_position,
 )
 
-DATA = Path(__file__).resolve().parent.parent / "QElogprob.json"
+DATA = Path(_ROOT) / "QElogprob.json"
 
 MARKER = "German translation:"
 HYPOTHESIS = "Der Zauberer wirkt einen mächtigen Zauberspruch."
@@ -71,7 +73,6 @@ def main() -> None:
         results.append((matched_tok, m))
         remaining = remaining[len(matched_tok):]
 
-    # Identify tightest races
     with_margin = [(tok, m) for tok, m in results if m is not None]
     if with_margin:
         tightest = sorted(with_margin, key=lambda x: x[1])

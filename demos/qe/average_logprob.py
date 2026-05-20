@@ -20,11 +20,13 @@ import math
 import sys
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+_ROOT = str(Path(__file__).resolve().parent.parent.parent)
+sys.path.insert(0, _ROOT)
+sys.path.insert(0, str(Path(_ROOT) / "qe"))
 
 from lib_prompt_logprobs import extract_hypothesis_tokens, aggregate_scores
 
-DATA = Path(__file__).resolve().parent.parent / "QElogprob.json"
+DATA = Path(_ROOT) / "QElogprob.json"
 
 MARKER = "German translation:"
 HYPOTHESIS = "Der Zauberer wirkt einen mächtigen Zauberspruch."
@@ -44,7 +46,6 @@ def main() -> None:
     logprobs = [lp for _, lp in tokens]
     agg = aggregate_scores(logprobs)
 
-    # ── Per-token table ──────────────────────────────────────────────
     print("Per-token logprobs")
     print(f"{'idx':>4}  {'token':<20}  {'logprob':>10}  {'prob':>10}")
     print("-" * 50)
@@ -52,13 +53,11 @@ def main() -> None:
         prob = math.exp(lp)
         print(f"{i:4d}  {tok!r:<20}  {lp:10.4f}  {prob:10.6f}")
 
-    # ── Aggregates ───────────────────────────────────────────────────
     print()
     print(f"  mean_logprob      = {agg['mean_logprob']:.6f}")
     print(f"  perplexity_proxy  = {agg['perplexity_proxy']:.6f}")
     print(f"  n_tokens          = {agg['n_tokens']}")
 
-    # ── Interpretation ───────────────────────────────────────────────
     m = agg["mean_logprob"]
     if m > -1.0:
         band = "HIGH confidence"

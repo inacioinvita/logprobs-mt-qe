@@ -10,6 +10,8 @@ import urllib.error
 import urllib.request
 from pathlib import Path
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+
 from lib_prompt_logprobs import (
     DEFAULT_BASE_URL,
     DEFAULT_MODEL,
@@ -66,11 +68,7 @@ def score_hypothesis(
     timeout: int = 300,
     n: int = 1,
 ) -> dict:
-    """
-    Call API and return {response, tokens, aggregates}.
-
-    Currently uses first completion when n > 1; use --n 1 for deterministic scoring.
-    """
+    """Call API and return {response, tokens, aggregates}."""
     prompt = build_scoring_prompt(source, hypothesis, lang)
     data = request_prompt_logprobs(
         base_url=base_url,

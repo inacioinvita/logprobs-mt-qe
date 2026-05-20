@@ -18,11 +18,13 @@ import math
 import sys
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+_ROOT = str(Path(__file__).resolve().parent.parent.parent)
+sys.path.insert(0, _ROOT)
+sys.path.insert(0, str(Path(_ROOT) / "qe"))
 
 from lib_prompt_logprobs import extract_hypothesis_tokens
 
-DATA = Path(__file__).resolve().parent.parent / "QElogprob.json"
+DATA = Path(_ROOT) / "QElogprob.json"
 
 MARKER = "German translation:"
 HYPOTHESIS = "Der Zauberer wirkt einen mächtigen Zauberspruch."
@@ -37,7 +39,6 @@ def main() -> None:
         print("ERROR: no hypothesis tokens found.")
         sys.exit(1)
 
-    # ── Sort by logprob (worst first) ────────────────────────────────
     ranked = sorted(enumerate(tokens), key=lambda x: x[1][1])
 
     print("All tokens sorted by logprob (worst → best)")

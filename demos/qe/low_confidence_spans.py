@@ -16,7 +16,9 @@ import json
 import sys
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+_ROOT = str(Path(__file__).resolve().parent.parent.parent)
+sys.path.insert(0, _ROOT)
+sys.path.insert(0, str(Path(_ROOT) / "qe"))
 
 from lib_prompt_logprobs import (
     extract_hypothesis_tokens,
@@ -24,7 +26,7 @@ from lib_prompt_logprobs import (
     hypothesis_text,
 )
 
-DATA = Path(__file__).resolve().parent.parent / "QElogprob.json"
+DATA = Path(_ROOT) / "QElogprob.json"
 
 MARKER = "German translation:"
 HYPOTHESIS = "Der Zauberer wirkt einen mächtigen Zauberspruch."
@@ -51,7 +53,6 @@ def main() -> None:
         print("No low-confidence spans detected — translation looks confident.")
     else:
         for j, span in enumerate(spans):
-            # Show context: tokens before and after the span
             start, end = span["start"], span["end"]
             before = "".join(t for t, _ in tokens[max(0, start - 2):start])
             after = "".join(t for t, _ in tokens[end:end + 2])

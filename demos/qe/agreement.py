@@ -14,8 +14,8 @@ Formula:
 This is a normalised consistency measure: 1.0 = perfect agreement,
 values near 0 or negative = high variance relative to score magnitude.
 
-This demo runs **offline** with hard-coded example scores to illustrate
-the concept.  For live usage, generate N hypotheses via the API with
+This demo runs **offline** with hard-coded scores to illustrate the
+concept.  For live usage, generate N hypotheses via the API with
 temperature > 0, score each with prompt_logprobs, then apply this formula.
 """
 from __future__ import annotations
@@ -24,7 +24,8 @@ import math
 import sys
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+_ROOT = str(Path(__file__).resolve().parent.parent.parent)
+sys.path.insert(0, _ROOT)
 
 
 def agreement_score(mean_logprobs: list[float]) -> float:
@@ -40,12 +41,7 @@ def agreement_score(mean_logprobs: list[float]) -> float:
 
 
 def main() -> None:
-    # ── Example A: consistent translations ───────────────────────────
-    # Three hypotheses all scored similarly by the model
     scores_consistent = [-1.25, -1.30, -1.22]
-
-    # ── Example B: inconsistent translations ─────────────────────────
-    # Three hypotheses with widely varying model scores
     scores_inconsistent = [-0.80, -3.50, -1.90]
 
     print("=" * 60)

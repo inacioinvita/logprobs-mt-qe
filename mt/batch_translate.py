@@ -3,7 +3,7 @@
 
 Usage
 -----
-python3 batch_translate.py \\
+python3 -m mt.batch_translate \\
   --base-url http://localhost:8000/v1/chat/completions \\
   --model <model-id> \\
   --lang German \\
@@ -16,6 +16,9 @@ from __future__ import annotations
 
 import argparse
 import sys
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from lib_mt_confidence import (
     confidence_score,

@@ -3,7 +3,7 @@
 
 Usage
 -----
-python3 translate.py \\
+python3 -m mt.translate \\
   --base-url http://localhost:8000/v1/chat/completions \\
   --model <model-id> \\
   --lang German \\
@@ -16,6 +16,9 @@ import argparse
 import json
 import sys
 import urllib.request
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from lib_mt_confidence import (
     confidence_score,

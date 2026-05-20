@@ -8,6 +8,8 @@ import json
 import sys
 from pathlib import Path
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+
 from lib_prompt_logprobs import (
     DEFAULT_BASE_URL,
     DEFAULT_MODEL,
@@ -82,7 +84,6 @@ def main() -> int:
             return 1
         for path in sorted(json_dir.glob("*.json")):
             data = json.loads(path.read_text(encoding="utf-8"))
-            # hypothesis text must be stored in JSON metadata or filename — skip align
             hypothesis, agg = scores_from_response(data, marker=args.marker)
             rows.append((path.stem, agg, hypothesis_text(hypothesis)))
     else:

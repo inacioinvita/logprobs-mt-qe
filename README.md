@@ -1,186 +1,167 @@
-# logprob-qe
+# mt-qe-logprobs
 
-Small scripts for **hypothesis-level quality estimation** of machine translations using `prompt_logprobs` from any OpenAI-compatible LLM server (vLLM, llama.cpp, Ollama, etc.).
+Logprob-based confidence scoring for machine translation. Works with any OpenAI-compatible LLM server (vLLM, llama.cpp, Ollama).
 
-The idea: teacher-force a translation hypothesis into the prompt and read the token logprobs assigned by the model. Higher mean logprob → the model finds the hypothesis more plausible → lightweight reference-free QE proxy.
+Two modes:
+- **MT** — translate and get per-token confidence in one call
+- **QE** — score existing translations without regenerating them
 
-## Translate with confidence — the basics
+---
 
-The simplest use: translate a segment and immediately get a confidence score.
+## What you get
 
-```bash
-python3 translate.py \
-  --base-url http://localhost:8000/v1/chat/completions \
-  --model <your-model-id> \
-  --lang German \
-  --source "The wizard casts a powerful spell."
+### MT: translate with confidence
+
 ```
+$ python3 mt/translate.py --model gemma-4 --lang German \
+    --source "The wizard casts a powerful spell."
 
-Output:
-```
 Translation: Der Zauberer wirkt einen mächtigen Zauberspruch.
-Confidence:  0.84 (high)
+Confidence:  0.72 (high)
 
   token              logprob      prob   margin
+  ──────────────────────────────────────────────
   Der                 -0.050    0.951    3.050
-  Za                  -0.010    0.990    5.190
-  ...
-  Zauberspruch.       -0.002    0.998    8.120
+   Za                 -0.010    0.990    5.190
+  uber                -0.002    0.998    6.998
+  er                  -0.003    0.997    8.197
+   wirkt              -0.420    0.657    0.820
+   einen              -0.080    0.923    2.820
+   mächt              -0.030    0.970    4.070
+  igen                -0.001    0.999    7.799
+   Zauber             -0.020    0.980    4.480
+  spruch              -0.002    0.998    8.118
+  .                   -0.010    0.990    4.890
 
 ⚠ Ambiguous: " wirkt" (margin 0.82, runner-up: " spricht")
-✓ No low-confidence spans detected.
+✓ No low-confidence spans detected
 ```
 
-For batch processing:
-```bash
-python3 batch_translate.py \
-  --model <your-model-id> \
-  --lang French \
-  --input segments.txt \
-  --output results.tsv \
-  --flag-for-review needs_review.txt
+### QE: score an existing translation
+
+```
+$ python3 qe/score_live.py --model gemma-4 --lang German \
+    --source "The wizard casts a powerful spell." \
+    --hypothesis "Der Zauberer wirkt einen mächtigen Zauberspruch."
+
+=== live score ===
+hypothesis: ' Der Zauberer wirkt einen mächtigen Zauberspruch.'
+mean_logprob=-2.190664  perplexity_proxy=8.941148  n_tokens=12
+
+ idx  token                      logprob          prob
+────────────────────────────────────────────────────────
+   0   Der                    -16.196169      0.000000
+   1   Za                      -7.125683      0.000804
+   2  uber                     -0.001937      0.998064
+   ...
+  11  .                        -0.000005      0.999995
 ```
 
-## Quick start
+### QE: rank competing translations
 
-```bash
-# Score a hypothesis from a saved API response
-python3 score_json.py QElogprob.json \
-  --hypothesis "Der Zauberer wirkt einen mächtigen Zauberspruch." \
-  --marker "German translation:"
+```
+$ python3 qe/compare_candidates.py --model gemma-4 --lang German \
+    --source "The wizard casts a powerful spell." \
+    --hypothesis "Der Zauberer wirkt einen mächtigen Zauberspruch." \
+    --hypothesis "Der Zauberer wirft einen schwachen Zauber."
 
-# Live score — teacher-force a hypothesis against a running vLLM server
-python3 score_live.py \
-  --base-url http://localhost:8000/v1/chat/completions \
-  --model <your-model-id> \
-  --lang German \
-  --source "The wizard casts a powerful spell." \
-  --hypothesis "Der Zauberer wirkt einen mächtigen Zauberspruch."
-
-# Rank multiple candidates (higher mean_logprob wins)
-python3 compare_candidates.py \
-  --base-url http://localhost:8000/v1/chat/completions \
-  --model <your-model-id> \
-  --lang German \
-  --source "The wizard casts a powerful spell." \
-  --hypothesis "Der Zauberer wirkt einen mächtigen Zauberspruch." \
-  --hypothesis "Der Zauberer wirft einen schwachen Zauber."
-
-# Good vs bad demo (reads QElogprob.json + calls live API for the bad hypothesis)
-python3 example_qe.py \
-  --base-url http://localhost:8000/v1/chat/completions \
-  --model <your-model-id>
+rank  label            mean_lp   ppl_proxy  hypothesis
+──────────────────────────────────────────────────────────
+   1  candidate_1     -2.1907      8.9411  Der Zauberer wirkt einen mächtigen...
+   2  candidate_2     -5.8660    352.8429  Der Zauberer wirft einen schwachen...
 ```
 
-## How it works
+### Batch: triage a file
 
-1. Build a prompt: `Translate the following <source-lang> text to <target-lang>:\n\n<source>\n\n<lang> translation: <hypothesis>`
-2. Send to the LLM with `prompt_logprobs: N` and `max_tokens: 1`.
-3. Walk the returned `prompt_logprobs` array; locate the marker (`<lang> translation:`); extract per-token logprobs after it.
-4. Aggregate: mean, sum, perplexity proxy.
+```
+$ python3 mt/batch_translate.py --model gemma-4 --lang French \
+    --input segments.txt --output results.tsv \
+    --flag-for-review needs_review.txt
 
-No generation happens — the hypothesis is forced as prompt text and scored in one forward pass.
+Processed 150 segments
+Mean confidence: 0.71
+Flagged for review: 23 (15.3%)
+```
+
+---
 
 ## Metrics
 
-| Field              | Meaning                                                    |
-| ------------------ | ---------------------------------------------------------- |
-| `mean_logprob`     | Average log P(token \| context) — general confidence       |
-| `min_logprob`      | Worst single-token logprob — weakest span                  |
-| `entropy`          | Shannon entropy over top-k — ambiguity                     |
-| `margin`           | Gap between top-1 and top-2 logprob — decisiveness         |
-| `low_conf_spans`   | Contiguous tokens below threshold — review targeting       |
-| `agreement`        | Variance of scores across N samples — self-consistency     |
-| `sum_logprob`      | Sum of token logprobs                                      |
-| `perplexity_proxy` | `exp(-mean_logprob)` — lower is better                     |
-| `n_tokens`         | Hypothesis token count (after marker)                      |
+| Metric | What it measures | Use for |
+|--------|-----------------|---------|
+| **Mean logprob** | Overall token-level confidence | Segment-level QE score |
+| **Min logprob** | Weakest single token | Spot mistranslations, rare words |
+| **Entropy** | Ambiguity across top-k alternatives | Find positions with multiple valid options |
+| **Margin (top1 − top2)** | How decisive the model was | Flag near-synonyms, close alternatives |
+| **Low-confidence spans** | Contiguous weak regions | Target human review efficiently |
+| **Agreement (n samples)** | Consistency across N generations | Detect unstable translations |
+| **Confidence score** | Sigmoid-mapped mean logprob (0–1) | Quick pass/fail threshold |
+| **Perplexity proxy** | exp(−mean logprob) | Compare across segments |
 
-## Examples — didactic metric demos
+---
 
-The `examples/` directory contains one script per QE metric, each runnable offline against the included sample data:
+## Demos
 
-| Script | Metric | What it shows |
-|--------|--------|---------------|
-| `01_average_logprob.py` | Average token logprob | General translation confidence |
-| `02_weakest_span.py` | Minimum token logprob | Worst-scoring token detection |
-| `03_entropy.py` | Entropy | Ambiguity at each token position |
-| `04_margin.py` | Margin (top1 − top2) | Decoder decisiveness |
-| `05_low_confidence_spans.py` | Low-confidence spans | Contiguous weak regions for review |
-| `06_agreement.py` | Agreement across samples | Self-consistency across N generations |
-| `07_translate_with_confidence.py` | Generation logprob confidence | Translate + score in one call |
+Runnable offline against included sample data — no server needed.
+
+**MT demos** (`demos/mt/`):
+
+| Script | Shows |
+|--------|-------|
+| `translate_with_confidence.py` | Full confidence report from generation logprobs |
+
+**QE demos** (`demos/qe/`):
+
+| Script | Shows |
+|--------|-------|
+| `average_logprob.py` | Mean logprob as segment-level score |
+| `weakest_span.py` | Finding the worst-scoring token |
+| `entropy.py` | Per-token ambiguity from top-k |
+| `margin.py` | Decisiveness at each position |
+| `low_confidence_spans.py` | Contiguous weak regions |
+| `agreement.py` | Self-consistency across samples |
 
 ```bash
-cd examples
-python3 01_average_logprob.py
-python3 02_weakest_span.py
-# ... etc
+python3 demos/qe/average_logprob.py
+python3 demos/mt/translate_with_confidence.py
 ```
 
-## Curl example
+---
 
-```bash
-curl -sS -X POST 'http://localhost:8000/v1/chat/completions' \
-  -H 'Content-Type: application/json' \
-  -d '{
-    "model": "<your-model-id>",
-    "messages": [{"role": "user", "content": "Translate the following text to German:\n\nThe wizard casts a powerful spell.\n\nGerman translation: Der Zauberer wirkt einen mächtigen Zauberspruch."}],
-    "temperature": 0,
-    "max_tokens": 1,
-    "logprobs": true,
-    "top_logprobs": 5,
-    "prompt_logprobs": 5
-  }'
+## Structure
+
+```
+mt-qe-logprobs/
+├── mt/                     # Translate + confidence
+│   ├── translate.py
+│   ├── batch_translate.py
+│   └── lib_mt_confidence.py
+├── qe/                     # Score existing translations
+│   ├── score_json.py
+│   ├── score_live.py
+│   ├── compare_candidates.py
+│   └── lib_prompt_logprobs.py
+├── demos/                  # Offline-runnable demos
+│   ├── mt/
+│   └── qe/
+├── LICENSE                 # MIT
+└── pyproject.toml
 ```
 
-Save the response to a `.json` file and pass it to `score_json.py` with `--hypothesis`.
-
-**Response structure (truncated)** — full example: `QElogprob.json`.
-
-```json
-{
-  "prompt_logprobs": [
-    null,
-    { "138932": { "rank": 1, "logprob": -0.30, "decoded_token": " wirkt" },
-      "10175":  { "rank": 3, "logprob": -2.61, "decoded_token": " einen" } }
-  ]
-}
-```
-
-## Files
-
-| File                     | Role                                                              |
-| ------------------------ | ----------------------------------------------------------------- |
-| `lib_prompt_logprobs.py` | Core library: parse `prompt_logprobs`, aggregate scores           |
-| `score_json.py`          | CLI — score a saved JSON response                                 |
-| `score_live.py`          | CLI — teacher-force a hypothesis against a live API               |
-| `compare_candidates.py`  | CLI — rank multiple hypotheses on one source                      |
-| `example_qe.py`          | Demo — good vs bad German hypothesis comparison                   |
-| `translate.py`           | CLI — translate + confidence scoring                              |
-| `batch_translate.py`     | CLI — batch translate with triage                                 |
-| `lib_mt_confidence.py`   | Generation logprob confidence metrics                             |
-| `QElogprob.json`         | Saved vLLM response for the wizard example (good hypothesis)      |
+---
 
 ## Compatible servers
 
-Any server that returns `prompt_logprobs` in the OpenAI chat completions format:
+Any OpenAI-compatible endpoint:
+- **vLLM** — full support (`prompt_logprobs` + generation `logprobs`)
+- **llama.cpp server** — OpenAI-compatible endpoint
+- **Ollama** — check version for `prompt_logprobs` support
 
-- **vLLM** — native support, pass `"prompt_logprobs": N` in the request body
-- **llama.cpp server** — supports `prompt_logprobs` via OpenAI-compatible endpoint
-- **Ollama** — check your version; `prompt_logprobs` support varies
-- Any other OpenAI-compatible endpoint that honours the `prompt_logprobs` field
-
-## Notes
-
-- Uses **stdlib only** — no `pip install` required.
-- Scoring window starts after `--marker` (defaults to `<lang> translation:` in live scripts).
-- When the forced prompt token is not top-1, vLLM returns it with a high `rank` value; the library selects that entry over rank-1.
-- Stops at chat-template tokens (`<|channel>`, `thought`, double newline after sentence end).
-- `compare_candidates.py --from-json DIR` scores pre-saved `*.json` responses without calling the API.
-- Always pass `--hypothesis` (or use `score_live.py` / `compare_candidates.py`) so tokens align to the forced target text; naive rank==1-only parsing can mis-read vLLM output.
+---
 
 ## Limitations
 
-- **Model plausibility, not human adequacy** — a fluent but unfaithful translation can outscore a correct one if the model finds it more "natural".
-- **Prompt format matters** — logprob scores are relative to the exact prompt template used. Compare only hypotheses scored with the same prompt.
-- **vLLM `prompt_logprobs` differs from generation logprobs** — the JSON structure uses token-id keys, not a flat list; this library handles that format.
-- **Forced tokens may not appear in top-k** — always pass `--hypothesis` so the library can locate the exact forced-token entry regardless of rank.
+- **Model plausibility ≠ human adequacy** — fluent but unfaithful translations can outscore correct ones.
+- **Prompt format matters** — only compare scores from the same prompt template.
+- **vLLM `prompt_logprobs` ≠ generation `logprobs`** — different JSON structures; this repo handles both.
+- **Forced tokens may not appear in top-k** — always pass `--hypothesis` for accurate QE alignment.
