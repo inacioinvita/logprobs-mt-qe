@@ -265,6 +265,75 @@ def aggregate_scores(logprobs: list[float]) -> dict[str, float | int]:
     }
 
 
+def top_logprobs_from_position(pos: dict[str, Any] | None) -> list[tuple[str, float, int]]:
+    """Return all (decoded_token, logprob, rank) entries sorted by rank."""
+    if not pos or not isinstance(pos, dict):
+        return []
+    entries = []
+    for info in pos.values():
+        if not isinstance(info, dict):
+            continue
+        tok = info.get("decoded_token", "")
+        lp = info.get("logprob")
+        rank = info.get("rank")
+        if tok and lp is not None and rank is not None:
+            entries.append((tok, float(lp), int(rank)))
+    return sorted(entries, key=lambda e: e[2])
+
+
+def token_entropy(pos: dict[str, Any] | None) -> float:
+    """Shannon entropy over top-k probabilities at one position (nats)."""
+    tops = top_logprobs_from_position(pos)
+    if not tops:
+        return 0.0
+    probs = [math.exp(lp) for _, lp, _ in tops]
+    total = sum(probs)
+    if total <= 0:
+        return 0.0
+    entropy = 0.0
+    for p in probs:
+        p_norm = p / total
+        if p_norm > 0:
+            entropy -= p_norm * math.log(p_norm)
+    return entropy
+
+
+def margin_top1_top2(pos: dict[str, Any] | None) -> float | None:
+    """Log-probability gap between rank-1 and rank-2 (larger = more decisive)."""
+    tops = top_logprobs_from_position(pos)
+    if len(tops) < 2:
+        return None
+    return tops[0][1] - tops[1][1]
+
+
+def find_low_confidence_spans(
+    tokens: list[tuple[str, float]],
+    threshold: float = -2.0,
+) -> list[dict]:
+    """Find contiguous runs of tokens below a logprob threshold."""
+    spans = []
+    current_span = None
+    for i, (tok, lp) in enumerate(tokens):
+        if lp < threshold:
+            if current_span is None:
+                current_span = {"start": i, "tokens": [], "logprobs": []}
+            current_span["tokens"].append(tok)
+            current_span["logprobs"].append(lp)
+        else:
+            if current_span is not None:
+                current_span["end"] = i
+                current_span["text"] = "".join(current_span["tokens"])
+                current_span["mean_logprob"] = sum(current_span["logprobs"]) / len(current_span["logprobs"])
+                spans.append(current_span)
+                current_span = None
+    if current_span is not None:
+        current_span["end"] = len(tokens)
+        current_span["text"] = "".join(current_span["tokens"])
+        current_span["mean_logprob"] = sum(current_span["logprobs"]) / len(current_span["logprobs"])
+        spans.append(current_span)
+    return spans
+
+
 def hypothesis_text(hypothesis: list[tuple[str, float]]) -> str:
     return "".join(t[0] for t in hypothesis)
 

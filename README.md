@@ -48,12 +48,35 @@ No generation happens — the hypothesis is forced as prompt text and scored in 
 
 | Field              | Meaning                                                    |
 | ------------------ | ---------------------------------------------------------- |
-| `mean_logprob`     | Average log P(token \| context) over hypothesis tokens     |
+| `mean_logprob`     | Average log P(token \| context) — general confidence       |
+| `min_logprob`      | Worst single-token logprob — weakest span                  |
+| `entropy`          | Shannon entropy over top-k — ambiguity                     |
+| `margin`           | Gap between top-1 and top-2 logprob — decisiveness         |
+| `low_conf_spans`   | Contiguous tokens below threshold — review targeting       |
+| `agreement`        | Variance of scores across N samples — self-consistency     |
 | `sum_logprob`      | Sum of token logprobs                                      |
 | `perplexity_proxy` | `exp(-mean_logprob)` — lower is better                     |
 | `n_tokens`         | Hypothesis token count (after marker)                      |
-| `min_logprob`      | Worst single-token logprob                                 |
-| `max_logprob`      | Best single-token logprob                                  |
+
+## Examples — didactic metric demos
+
+The `examples/` directory contains one script per QE metric, each runnable offline against the included sample data:
+
+| Script | Metric | What it shows |
+|--------|--------|---------------|
+| `01_average_logprob.py` | Average token logprob | General translation confidence |
+| `02_weakest_span.py` | Minimum token logprob | Worst-scoring token detection |
+| `03_entropy.py` | Entropy | Ambiguity at each token position |
+| `04_margin.py` | Margin (top1 − top2) | Decoder decisiveness |
+| `05_low_confidence_spans.py` | Low-confidence spans | Contiguous weak regions for review |
+| `06_agreement.py` | Agreement across samples | Self-consistency across N generations |
+
+```bash
+cd examples
+python3 01_average_logprob.py
+python3 02_weakest_span.py
+# ... etc
+```
 
 ## Curl example
 
