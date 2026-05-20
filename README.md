@@ -4,6 +4,43 @@ Small scripts for **hypothesis-level quality estimation** of machine translation
 
 The idea: teacher-force a translation hypothesis into the prompt and read the token logprobs assigned by the model. Higher mean logprob → the model finds the hypothesis more plausible → lightweight reference-free QE proxy.
 
+## Translate with confidence — the basics
+
+The simplest use: translate a segment and immediately get a confidence score.
+
+```bash
+python3 translate.py \
+  --base-url http://localhost:8000/v1/chat/completions \
+  --model <your-model-id> \
+  --lang German \
+  --source "The wizard casts a powerful spell."
+```
+
+Output:
+```
+Translation: Der Zauberer wirkt einen mächtigen Zauberspruch.
+Confidence:  0.84 (high)
+
+  token              logprob      prob   margin
+  Der                 -0.050    0.951    3.050
+  Za                  -0.010    0.990    5.190
+  ...
+  Zauberspruch.       -0.002    0.998    8.120
+
+⚠ Ambiguous: " wirkt" (margin 0.82, runner-up: " spricht")
+✓ No low-confidence spans detected.
+```
+
+For batch processing:
+```bash
+python3 batch_translate.py \
+  --model <your-model-id> \
+  --lang French \
+  --input segments.txt \
+  --output results.tsv \
+  --flag-for-review needs_review.txt
+```
+
 ## Quick start
 
 ```bash
@@ -70,6 +107,7 @@ The `examples/` directory contains one script per QE metric, each runnable offli
 | `04_margin.py` | Margin (top1 − top2) | Decoder decisiveness |
 | `05_low_confidence_spans.py` | Low-confidence spans | Contiguous weak regions for review |
 | `06_agreement.py` | Agreement across samples | Self-consistency across N generations |
+| `07_translate_with_confidence.py` | Generation logprob confidence | Translate + score in one call |
 
 ```bash
 cd examples
@@ -117,6 +155,9 @@ Save the response to a `.json` file and pass it to `score_json.py` with `--hypot
 | `score_live.py`          | CLI — teacher-force a hypothesis against a live API               |
 | `compare_candidates.py`  | CLI — rank multiple hypotheses on one source                      |
 | `example_qe.py`          | Demo — good vs bad German hypothesis comparison                   |
+| `translate.py`           | CLI — translate + confidence scoring                              |
+| `batch_translate.py`     | CLI — batch translate with triage                                 |
+| `lib_mt_confidence.py`   | Generation logprob confidence metrics                             |
 | `QElogprob.json`         | Saved vLLM response for the wizard example (good hypothesis)      |
 
 ## Compatible servers
