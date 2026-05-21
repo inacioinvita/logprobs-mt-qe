@@ -1,6 +1,6 @@
 # Getting started with logprobs-mt-qe
 
-Logprob-based confidence scoring for machine translation over any OpenAI-compatible LLM server (vLLM, llama.cpp, Ollama). Two workflows: translate with per-token confidence (MT), or score existing translations without regenerating them (QE).
+Logprob-based review signals for machine translation over any OpenAI-compatible LLM server (vLLM, llama.cpp, Ollama). Two workflows: translate with per-token logprobs (MT), or score existing translations without regenerating them (QE).
 
 ## Minimal setup
 
@@ -17,9 +17,9 @@ Point scripts at your server with `--base-url` and `--model`. Live validation us
 
 | Mode | Endpoint |
 |------|----------|
-| MT | `http://10.0.1.240:8001/v1/chat/completions` |
-| QE | `http://10.0.1.240:8001/v1/completions` |
-| Model | `google/gemma-4-26B-A4B-it` |
+| MT | `http://localhost:8000/v1/chat/completions` |
+| QE | `http://localhost:8000/v1/completions` |
+| Model | `<model-id>` |
 
 Replace host, port, and model id for your environment.
 
@@ -27,7 +27,7 @@ Replace host, port, and model id for your environment.
 
 ```
 logprobs-mt-qe/
-├── mt/                     # Translation + confidence
+├── mt/                     # Translation + review signals
 │   ├── translate.py        # Translate one segment live
 │   ├── batch_translate.py  # Batch processing for files
 │   └── lib_mt_confidence.py
@@ -42,18 +42,18 @@ logprobs-mt-qe/
 └── README.md, pyproject.toml, LICENSE
 ```
 
-- **mt/** — generate translations and see confidence alongside them
+- **mt/** — generate translations and inspect logprob review signals
 - **qe/** — teacher-force an existing hypothesis and read prompt logprobs
 - **demos/** — offline concept demos; see [known gaps](#known-demo-gaps) below
 
 ---
 
-## 1. Live MT — translate with confidence
+## 1. Live MT — translate with review signals
 
 ```bash
 python3 mt/translate.py \
-  --base-url http://10.0.1.240:8001/v1/chat/completions \
-  --model google/gemma-4-26B-A4B-it \
+  --base-url http://localhost:8000/v1/chat/completions \
+  --model <model-id> \
   --lang English \
   --source "A equipe de atendimento abriu um registro de reclamação, mas o pedido ficou parado pois o fornecedor ainda não enviou a confirmação de inscrição estadual corrigida nem confirmou se a cobrança do boleto seria estornada em tempo."
 ```
@@ -62,17 +62,18 @@ Example output:
 
 ```
 Translation: The customer service team opened a complaint ticket, but the request has stalled because the supplier has not yet sent the corrected state registration confirmation nor confirmed whether the bank slip charge would be refunded in time.
-Model plausibility: 0.72
-Terminology confidence: medium-low
-QE proxy: review recommended
+Mean logprob: -0.38
+Plausibility band: high (heuristic)
+Terminology review signal: medium-high uncertainty
+Review recommendation: review recommended
 
-Low-confidence spans:
+Review spans:
   "state registration confirmation"
   "bank slip charge"
   ...
 ```
 
-**How to read it:** model plausibility is a display-only sigmoid of mean logprob. It often saturates near **0.72–0.73** for fluent text and is **not calibrated**. Use **terminology confidence**, **QE proxy**, and **review spans** to decide what a human should check.
+**How to read it:** mean logprob is the raw segment-level plausibility signal. The band is a coarse heuristic, not a calibrated quality score. Use **terminology review signal**, **review recommendation**, and **review spans** to decide what a human should check.
 
 ---
 
@@ -82,8 +83,8 @@ QE uses `/v1/completions` with `prompt_logprobs` so the scored text matches your
 
 ```bash
 python3 qe/score_live.py \
-  --base-url http://10.0.1.240:8001/v1/completions \
-  --model google/gemma-4-26B-A4B-it \
+  --base-url http://localhost:8000/v1/completions \
+  --model <model-id> \
   --lang English \
   --source "Antes de escriturar a entrada, o fiscal pediu o XML autorizado, o manifesto do destinatário e a carta de correção, pois a nota veio com CFOP de devolução simbólica, sem destaque de DIFAL, embora a mercadoria tivesse sido remetida para uso e consumo." \
   --hypothesis "Before recording the entry, the tax inspector requested the authorized XML, the recipient's manifesto, and the correction letter, as the invoice was issued with a symbolic return CFOP without highlighting the DIFAL, even though the goods had been sent for use and consumption."
@@ -99,8 +100,8 @@ For segment-level decisions, prefer raw **`mean_logprob`** over the displayed pl
 
 ```bash
 python3 qe/compare_candidates.py \
-  --base-url http://10.0.1.240:8001/v1/completions \
-  --model google/gemma-4-26B-A4B-it \
+  --base-url http://localhost:8000/v1/completions \
+  --model <model-id> \
   --lang English \
   --source "A equipe de atendimento abriu um registro de reclamação, mas o pedido ficou parado pois o fornecedor ainda não enviou a confirmação de inscrição estadual corrigida nem confirmou se a cobrança do boleto seria estornada em tempo." \
   --hypothesis "The customer service team opened a complaint record, but the request is on hold because the supplier has not yet sent the corrected state registration confirmation nor confirmed whether the boleto charge would be refunded in time." \
@@ -118,15 +119,15 @@ Higher mean logprob means the model finds the wording more plausible — not nec
 
 ```bash
 python3 mt/batch_translate.py \
-  --base-url http://10.0.1.240:8001/v1/chat/completions \
-  --model google/gemma-4-26B-A4B-it \
+  --base-url http://localhost:8000/v1/chat/completions \
+  --model <model-id> \
   --lang English \
   --input demos/data/ptbr_single.txt \
   --output results.tsv \
   --flag-for-review needs_review.txt
 ```
 
-Batch translation works, but flagging still relies on an older plausibility threshold. You may see **0 flagged** even when terminology confidence is medium-low. Treat batch output as a starting point until thresholds align with terminology-first signals.
+Batch translation writes raw mean logprob, a heuristic plausibility band, terminology review signal, review recommendation, ambiguous-token count, and review-span count.
 
 ---
 
@@ -160,12 +161,12 @@ Use live `qe/score_live.py` and `qe/compare_candidates.py` for reliable QE numbe
 | Metric | What it measures | When to use |
 |--------|------------------|-------------|
 | **Mean logprob** | Overall model plausibility | Segment-level raw score |
-| **Terminology confidence** | Lexical weakness in content tokens | Review recommendation |
-| **Low-confidence spans** | Contiguous weak regions | Target human review |
+| **Terminology review signal** | Lexical uncertainty in content tokens | Review recommendation |
+| **Review spans** | Contiguous weak or ambiguous regions | Target human review |
 | **Min logprob** | Weakest single token | Spot rare words / mistranslations |
 | **Margin (top1 − top2)** | Decisiveness at each position | Near-synonym ambiguity |
 | **Entropy** | Ambiguity across top-k | Uncertain positions |
-| **Model plausibility** | Sigmoid display of mean logprob | Quick read only — not calibrated |
+| **Plausibility band** | Coarse mean-logprob band | Quick read only — not calibrated |
 | **Perplexity proxy** | exp(−mean logprob) | Compare segments on a familiar scale |
 
 Store raw `mean_logprob`, `min_logprob`, `margin`, `entropy`, `perplexity_proxy`, and `n_tokens` for serious evaluation.

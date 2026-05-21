@@ -1,12 +1,12 @@
 #!/usr/bin/env python3
 """
-Average Token Logprob — General Confidence
-===========================================
+Average Token Logprob — General Plausibility
+============================================
 
 The simplest QE metric: average the log-probability the model assigns to each
 token in the hypothesis.  Higher (closer to 0) means the model finds the
-translation more plausible overall.  Useful as a single-number segment-level
-QE score that correlates with human judgements of fluency.
+translation more plausible overall under this prompt.  Useful as a raw
+segment-level QE signal, not a calibrated adequacy score.
 
 Interpretation guide:
     mean > -1.0   ->  high plausibility

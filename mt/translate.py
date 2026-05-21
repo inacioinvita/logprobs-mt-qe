@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Translate a segment and score confidence via generation logprobs.
+"""Translate a segment and show generation-logprob review signals.
 
 Usage
 -----
@@ -21,11 +21,11 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from mt.lib_mt_confidence import (
-    confidence_score,
     find_uncertain_spans,
     flag_ambiguous_tokens,
-    format_confidence_report,
+    format_review_report,
     generation_tokens_from_response,
+    mean_logprob,
     terminology_assessment,
 )
 
@@ -84,7 +84,7 @@ def translate(
 
 def main(argv: list[str] | None = None) -> None:
     ap = argparse.ArgumentParser(
-        description="Translate a segment and score confidence via generation logprobs.",
+        description="Translate a segment and show generation-logprob review signals.",
     )
     ap.add_argument("--base-url", default=DEFAULT_BASE_URL, help="API endpoint URL")
     ap.add_argument("--model", default=DEFAULT_MODEL, help="Model identifier")
@@ -94,7 +94,6 @@ def main(argv: list[str] | None = None) -> None:
     ap.add_argument("--max-tokens", type=int, default=256, help="Max generation tokens (default 256)")
     ap.add_argument("--api-key", default=None, help="API key (optional)")
     ap.add_argument("--margin-threshold", type=float, default=1.0, help="Ambiguity margin threshold (default 1.0)")
-    ap.add_argument("--confidence-threshold", type=float, default=0.5, help="Confidence threshold for verdict")
     ap.add_argument("--save-json", default=None, metavar="PATH", help="Save raw API response to JSON file")
     args = ap.parse_args(argv)
 
@@ -122,23 +121,19 @@ def main(argv: list[str] | None = None) -> None:
         sys.exit(0)
 
     logprobs = [t["logprob"] for t in gen_tokens]
-    conf = confidence_score(logprobs)
+    mean_lp = mean_logprob(logprobs)
     ambiguous = flag_ambiguous_tokens(gen_tokens, margin_threshold=args.margin_threshold)
     uncertain = find_uncertain_spans(gen_tokens)
 
-    report = format_confidence_report(translation, gen_tokens, conf, ambiguous, uncertain)
+    report = format_review_report(translation, gen_tokens, mean_lp, ambiguous, uncertain)
     print(report)
 
     print()
     terminology = terminology_assessment(gen_tokens)
-    if terminology["qe_proxy"] != "high":
-        print(f"\u26a0 {terminology['qe_proxy'].capitalize()}")
-    elif conf >= args.confidence_threshold:
-        print("\u2713 High model plausibility")
-    elif conf >= args.confidence_threshold * 0.6:
-        print("\u26a0 Review recommended")
+    if terminology["review_recommendation"] == "no terminology review triggered":
+        print("\u2713 No terminology review triggered")
     else:
-        print("\u2717 Low model plausibility")
+        print(f"\u26a0 {terminology['review_recommendation'].capitalize()}")
 
 
 if __name__ == "__main__":

@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 """
-Low-Confidence Spans — Human Review Targeting
-===============================================
+Review Spans — Human Review Targeting
+=====================================
 
-Rather than flagging individual tokens, grouping contiguous low-confidence
+Rather than flagging individual tokens, grouping contiguous low-logprob
 tokens into spans gives reviewers actionable segments to check.
 
 Adjust the threshold based on your quality bar:
@@ -45,7 +45,7 @@ def main() -> None:
     print(f"Spans found: {len(spans)}\n")
 
     if not spans:
-        print("No low-confidence spans detected — translation looks confident.")
+        print("No review spans detected at this threshold.")
     else:
         for j, span in enumerate(spans):
             start, end = span["start"], span["end"]
@@ -59,7 +59,7 @@ def main() -> None:
 
     print(
         "Rather than flagging individual tokens, grouping contiguous\n"
-        "low-confidence tokens into spans gives reviewers actionable\n"
+        "low-logprob tokens into spans gives reviewers actionable\n"
         "segments to check.  Adjust the threshold based on your quality bar."
     )
 

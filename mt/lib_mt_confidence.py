@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Generation-logprob confidence metrics for machine translation.
+"""Generation-logprob review signals for machine translation.
 
 Unlike prompt_logprobs (which score a *fixed* hypothesis), generation logprobs
 score the model's **own** output — no hypothesis needed.  This module works
@@ -80,21 +80,28 @@ def generation_tokens_from_response(data: dict[str, Any]) -> list[dict]:
 
 
 # ---------------------------------------------------------------------------
-# Model plausibility score
+# Plausibility signals
 # ---------------------------------------------------------------------------
 
-def confidence_score(logprobs: list[float]) -> float:
-    """Map mean logprob to a 0-1 model plausibility display score.
-
-    ``score = 1 / (1 + exp(-mean_logprob - 1))``
-
-    Landmarks: mean_lp=0 -> ~0.73, mean_lp=-1 -> 0.5, mean_lp=-3 -> ~0.12.
-    This is intentionally lightweight and not calibrated.
-    """
+def mean_logprob(logprobs: list[float]) -> float:
+    """Length-normalised raw generation logprob."""
     if not logprobs:
-        return 0.0
-    mean_lp = sum(logprobs) / len(logprobs)
-    return 1.0 / (1.0 + math.exp(-mean_lp - 1.0))
+        return float("nan")
+    return sum(logprobs) / len(logprobs)
+
+
+def plausibility_band(mean_lp: float) -> str:
+    """Coarse heuristic band for raw mean logprob.
+
+    These thresholds are demo defaults, not calibrated quality labels.
+    """
+    if math.isnan(mean_lp):
+        return "unknown"
+    if mean_lp > -1.0:
+        return "high"
+    if mean_lp > -3.0:
+        return "moderate"
+    return "low"
 
 
 def token_margin(tok: dict) -> float:
@@ -138,14 +145,14 @@ def terminology_assessment(gen_tokens: list[dict]) -> dict[str, float | str | in
     lexical_tokens = [t for t in gen_tokens if t.get("token", "").strip() and not _PUNCT_OR_SPACE.match(t["token"].strip())]
     if not content_tokens:
         return {
-            "confidence": 0.0,
+            "score": 0.0,
             "mean_prob": 0.0,
             "min_prob": 0.0,
             "weak_share": 0.0,
             "ambiguous_share": 0.0,
             "n_content_tokens": 0,
-            "label": "low",
-            "qe_proxy": "review recommended",
+            "label": "high uncertainty",
+            "review_recommendation": "review recommended",
         }
 
     probs = [t["prob"] for t in content_tokens]
@@ -156,7 +163,7 @@ def terminology_assessment(gen_tokens: list[dict]) -> dict[str, float | str | in
     ambiguous_share = ambiguous_count / len(content_tokens)
     mean_prob = sum(probs) / len(probs)
     min_prob = min(lexical_probs or probs)
-    confidence = (
+    score = (
         0.50 * mean_prob
         + 0.25 * min_prob
         + 0.15 * (1 - weak_share)
@@ -164,20 +171,20 @@ def terminology_assessment(gen_tokens: list[dict]) -> dict[str, float | str | in
     )
 
     if weak_share >= 0.15 or min_prob < 0.50 or (weak_lexical_count >= 1 and ambiguous_count >= 1):
-        label = "medium-low"
-        qe_proxy = "review recommended"
+        label = "medium-high uncertainty"
+        review_recommendation = "review recommended"
     elif ambiguous_share >= 0.08 or ambiguous_count >= 2:
-        label = "medium"
-        qe_proxy = "terminology review recommended"
-    elif confidence >= 0.75:
-        label = "high"
-        qe_proxy = "high"
+        label = "medium uncertainty"
+        review_recommendation = "terminology review recommended"
+    elif score >= 0.75:
+        label = "low uncertainty"
+        review_recommendation = "no terminology review triggered"
     else:
-        label = "medium"
-        qe_proxy = "review terminology"
+        label = "medium uncertainty"
+        review_recommendation = "review terminology"
 
     return {
-        "confidence": confidence,
+        "score": score,
         "mean_prob": mean_prob,
         "min_prob": min_prob,
         "weak_share": weak_share,
@@ -186,7 +193,8 @@ def terminology_assessment(gen_tokens: list[dict]) -> dict[str, float | str | in
         "weak_lexical_count": weak_lexical_count,
         "ambiguous_count": ambiguous_count,
         "label": label,
-        "qe_proxy": qe_proxy,
+        "review_recommendation": review_recommendation,
+        "qe_proxy": review_recommendation,
     }
 
 
@@ -346,26 +354,25 @@ def find_uncertain_spans(
 # Report formatting
 # ---------------------------------------------------------------------------
 
-def format_confidence_report(
+def format_review_report(
     translation: str,
     gen_tokens: list[dict],
-    confidence: float,
+    mean_lp: float,
     ambiguous: list[dict],
     uncertain_spans: list[dict],
 ) -> str:
-    """Format a human-readable confidence report string."""
+    """Format a human-readable review-signal report."""
     lines: list[str] = []
 
-    fluency = "high" if confidence >= 0.6 else "medium" if confidence >= 0.4 else "low"
     terminology = terminology_assessment(gen_tokens)
     lines.append(f"Translation: {translation}")
-    lines.append(f"Model plausibility: {confidence:.2f}")
-    lines.append(f"Fluency: {fluency}")
-    lines.append(f"Terminology confidence: {terminology['label']}")
-    lines.append(f"QE proxy: {terminology['qe_proxy']}")
+    lines.append(f"Mean logprob: {mean_lp:.3f}")
+    lines.append(f"Plausibility band: {plausibility_band(mean_lp)} (heuristic)")
+    lines.append(f"Terminology review signal: {terminology['label']}")
+    lines.append(f"Review recommendation: {terminology['review_recommendation']}")
     lines.append(
         "Terminology detail: "
-        f"score={terminology['confidence']:.2f}, "
+        f"score={terminology['score']:.2f}, "
         f"min_prob={terminology['min_prob']:.2f}, "
         f"weak_share={terminology['weak_share']:.0%}, "
         f"ambiguous_share={terminology['ambiguous_share']:.0%}"
@@ -407,6 +414,6 @@ def format_confidence_report(
             if s.get("reasons"):
                 lines.append(f"  Reason: {s['reasons'][0]}")
     else:
-        lines.append("\u2713 No low-confidence spans detected.")
+        lines.append("\u2713 No review spans flagged.")
 
     return "\n".join(lines)

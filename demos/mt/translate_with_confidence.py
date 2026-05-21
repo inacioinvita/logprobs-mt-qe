@@ -1,17 +1,17 @@
 #!/usr/bin/env python3
-"""Translate with confidence: generation logprob scoring.
+"""Translate with review signals: generation logprob scoring.
 
 Generation logprobs score the model's OWN output — no hypothesis needed.
-Translate and immediately know how confident the model is.
+See where the model's token probabilities are weakest.
 
 Unlike prompt_logprobs (QE demos), which teacher-force a *fixed* hypothesis
 and measure how plausible the model finds it, generation logprobs come free
 with every translation call.
 
 Key concepts:
-  - Model plausibility score: sigmoid mapping from mean logprob to 0-1.
+  - Mean logprob: raw length-normalised generation plausibility.
   - Ambiguous tokens: close margin between top-1 and top-2.
-  - Low-confidence spans: contiguous regions where the model struggled.
+  - Review spans: contiguous regions where the model struggled.
 
 Offline demo
 ------------
@@ -38,11 +38,12 @@ _ROOT = str(Path(__file__).resolve().parent.parent.parent)
 sys.path.insert(0, _ROOT)
 
 from mt.lib_mt_confidence import (
-    confidence_score,
     find_uncertain_spans,
     flag_ambiguous_tokens,
-    format_confidence_report,
+    format_review_report,
     generation_tokens_from_response,
+    mean_logprob,
+    terminology_assessment,
 )
 
 MOCK_RESPONSE = {
@@ -173,7 +174,7 @@ MOCK_RESPONSE = {
 
 
 def run_offline_demo() -> None:
-    """Process the mock response through all confidence functions."""
+    """Process the mock response through review-signal functions."""
     print("=" * 60)
     print("OFFLINE DEMO — mock generation logprobs")
     print("=" * 60)
@@ -183,20 +184,21 @@ def run_offline_demo() -> None:
     translation = MOCK_RESPONSE["choices"][0]["message"]["content"]
     logprobs = [t["logprob"] for t in gen_tokens]
 
-    conf = confidence_score(logprobs)
+    mean_lp = mean_logprob(logprobs)
     ambiguous = flag_ambiguous_tokens(gen_tokens, margin_threshold=1.0)
     uncertain = find_uncertain_spans(gen_tokens)
 
-    report = format_confidence_report(
-        translation, gen_tokens, conf, ambiguous, uncertain,
+    report = format_review_report(
+        translation, gen_tokens, mean_lp, ambiguous, uncertain,
     )
     print(report)
     print()
 
-    if conf >= 0.5:
-        print("\u2713 High model plausibility")
+    terminology = terminology_assessment(gen_tokens)
+    if terminology["review_recommendation"] == "no terminology review triggered":
+        print("\u2713 No terminology review triggered")
     else:
-        print("\u26a0 Review recommended")
+        print(f"\u26a0 {terminology['review_recommendation'].capitalize()}")
 
 
 def run_live_demo(
@@ -209,7 +211,7 @@ def run_live_demo(
     ),
     lang: str = "English",
 ) -> None:
-    """Call a real API and display the confidence report."""
+    """Call a real API and display the review-signal report."""
     from mt.translate import translate as api_translate
 
     print("=" * 60)
@@ -227,18 +229,18 @@ def run_live_demo(
         return
 
     logprobs = [t["logprob"] for t in gen_tokens]
-    conf = confidence_score(logprobs)
+    mean_lp = mean_logprob(logprobs)
     ambiguous = flag_ambiguous_tokens(gen_tokens)
     uncertain = find_uncertain_spans(gen_tokens)
 
-    report = format_confidence_report(
-        translation, gen_tokens, conf, ambiguous, uncertain,
+    report = format_review_report(
+        translation, gen_tokens, mean_lp, ambiguous, uncertain,
     )
     print(report)
 
 
 def main() -> None:
-    ap = argparse.ArgumentParser(description="Translate with confidence scoring demo")
+    ap = argparse.ArgumentParser(description="Translate with logprob review signals demo")
     ap.add_argument("--live", action="store_true", help="Call a real API instead of using mock data")
     ap.add_argument("--base-url", default="http://localhost:8000/v1/chat/completions")
     ap.add_argument("--model", default="")
