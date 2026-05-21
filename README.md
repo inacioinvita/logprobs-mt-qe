@@ -4,16 +4,18 @@ Logprob-based review signals for machine translation. Works with any OpenAI-comp
 
 Two modes:
 
-- **MT** — translate and get per-token logprobs in one call (`/v1/chat/completions`)
-- **QE** — score existing translations without regenerating them (`/v1/completions` with `prompt_logprobs`)
+- **MT** — translate and read per-token generation logprobs in one call (`/v1/chat/completions` with `logprobs: true`).
+- **QE** — score an already-produced hypothesis without regenerating it (`/v1/completions` with `prompt_logprobs`).
 
-The main value is **terminology-first review**: logprobs localise uncertainty around domain terms a human reviewer would check — not a calibrated adequacy score.
+The repo exposes per-token logprobs and a small set of derived signals (`mean_logprob`, `min_logprob`, `margin`, `entropy`, `perplexity_proxy`, low-confidence spans, language-script drift, and a few distributional summaries). Qualitative bands, review thresholds, and quality labels are deliberately left to a calibration layer the caller chooses — see [`mt/presets/v01_heuristic.py`](mt/presets/v01_heuristic.py) for one illustrative example.
+
+The core idea: model-internal logprobs are cheap, reference-free, and localise *where* a translation needs a second look. Mapping them onto a calibrated quality score is an open research question, not something this repo prescribes.
 
 ---
 
 ## What you get (live PT-BR → EN)
 
-Examples use a local OpenAI-compatible server. Replace `http://localhost:8000` and `<model-id>` with your own endpoint and model.
+Examples assume an OpenAI-compatible server at `http://localhost:8000` and a model id of `<model-id>`.
 
 ### Example 1 — customer service / boleto
 
@@ -29,18 +31,30 @@ A equipe de atendimento abriu um registro de reclamação, mas o pedido ficou pa
 The customer service team opened a complaint ticket, but the request has stalled because the supplier has not yet sent the corrected state registration confirmation nor confirmed whether the bank slip charge would be refunded in time.
 ```
 
-**Output highlights:**
+**Signals (excerpt):**
 
 ```
-Mean logprob: -0.38
-Plausibility band: high (heuristic)
-Terminology review signal: medium-high uncertainty
-Review recommendation: review recommended
+Aggregate signals
+  mean_logprob          -0.380
+  perplexity_proxy       1.462      (exp(-mean_logprob))
+  display_score          90.5%      (piecewise rescale; anchors: 0→100%, -1→75%, -3→25%, -6→0%)
+
+Distribution signals (content tokens)
+  composite_score        0.840
+  min_lexical_prob       0.510
+  mean_top_entropy       0.342 nats
+  mean_margin            2.100
+  weak_share             0.040      (prob<0.6, or margin<0.4, or logprob<-0.75)
+  ambiguous_share        0.090      (prob<0.8 or margin<1.0)
+
+Review spans (n=2, seed logprob threshold -0.75)
+  ... "state registration confirmation" ...
+  ... "bank slip charge" ...
 ```
 
-Review spans flag wording choices such as `customer` vs `support`, `ticket` vs `record`, and Brazilian payment/admin terms (`inscrição estadual`, `boleto`, `estornada`).
+Span flags pick up wording choices such as `customer` vs `support`, `ticket` vs `record`, and Brazilian payment / admin terms (`inscrição estadual`, `boleto`, `estornada`).
 
-**Candidate ranking (same source):** careful domain translation wins on `mean_logprob`:
+**Candidate ranking on the same source:**
 
 | Rank | Style | mean_lp |
 |------|-------|---------|
@@ -49,7 +63,7 @@ Review spans flag wording choices such as `customer` vs `support`, `ticket` vs `
 | 3 | Generic / smoothed | -2.524 |
 | 4 | Literal / wrong | -3.421 |
 
-Logprobs rank plausible phrasing; they do not guarantee adequacy. A fluent-but-wrong translation can still beat a clumsier correct one.
+Logprobs rank plausible phrasing; they do not guarantee adequacy. Fluent-but-wrong can still beat clumsier-but-correct.
 
 ### Example 2 — fiscal / CFOP / DIFAL
 
@@ -65,22 +79,13 @@ Antes de escriturar a entrada, o fiscal pediu o XML autorizado, o manifesto do d
 Before recording the entry, the tax inspector requested the authorized XML, the recipient's manifesto, and the correction letter, as the invoice was issued with a symbolic return CFOP without highlighting the DIFAL, even though the goods had been sent for use and consumption.
 ```
 
-**Output highlights:**
-
-```
-Mean logprob: -0.34
-Plausibility band: high (heuristic)
-Terminology review signal: medium-high uncertainty
-Review recommendation: review recommended
-```
-
-Flags include `manifesto` vs `manifest`, `as` vs `because`, and `highlighting the DIFAL`.
+Spans surface `manifesto` vs `manifest`, `as` vs `because`, and the phrase around `highlighting the DIFAL`.
 
 ---
 
 ## Commands
 
-### MT: translate with review signals
+### MT: translate with signals
 
 ```bash
 python3 mt/translate.py \
@@ -97,8 +102,8 @@ python3 qe/score_live.py \
   --base-url http://localhost:8000/v1/completions \
   --model <model-id> \
   --lang English \
-  --source "A equipe de atendimento abriu um registro de reclamação, mas o pedido ficou parado pois o fornecedor ainda não enviou a confirmação de inscrição estadual corrigida nem confirmou se a cobrança do boleto seria estornada em tempo." \
-  --hypothesis "The customer service team opened a complaint ticket, but the request has stalled because the supplier has not yet sent the corrected state registration confirmation nor confirmed whether the bank slip charge would be refunded in time."
+  --source "..." \
+  --hypothesis "..."
 ```
 
 ### QE: rank competing translations
@@ -108,13 +113,13 @@ python3 qe/compare_candidates.py \
   --base-url http://localhost:8000/v1/completions \
   --model <model-id> \
   --lang English \
-  --source "A equipe de atendimento abriu um registro de reclamação, mas o pedido ficou parado pois o fornecedor ainda não enviou a confirmação de inscrição estadual corrigida nem confirmou se a cobrança do boleto seria estornada em tempo." \
-  --hypothesis "The customer service team opened a complaint record, but the request is on hold because the supplier has not yet sent the corrected state registration confirmation nor confirmed whether the boleto charge would be refunded in time." \
-  --hypothesis "The customer service team opened a complaint ticket, but the request has stalled because the supplier has not yet sent the corrected state registration confirmation nor confirmed whether the bank slip charge would be refunded in time." \
-  --hypothesis "The support team opened a ticket, but the request was delayed because the supplier had not yet sent the corrected registration or confirmed whether the payment would be refunded."
+  --source "..." \
+  --hypothesis "candidate A" \
+  --hypothesis "candidate B" \
+  --hypothesis "candidate C"
 ```
 
-### Batch: triage a file
+### Batch: write raw signals to TSV
 
 ```bash
 python3 mt/batch_translate.py \
@@ -122,40 +127,41 @@ python3 mt/batch_translate.py \
   --model <model-id> \
   --lang English \
   --input demos/data/ptbr_single.txt \
-  --output results.tsv \
-  --flag-for-review needs_review.txt
+  --output results.tsv
 ```
 
-The batch path writes raw mean logprob, a heuristic plausibility band, terminology review signal, review recommendation, ambiguous-token count, and review-span count.
+The TSV holds the raw measurements only (see [`docs/signals.md`](docs/signals.md)). Triage cutoffs — which rows count as "needs review" — are intentionally left to the caller; filter the TSV with awk / pandas / SQL using whatever cutoffs make sense for your domain.
 
 ---
 
-## Scoring standard
+## 
 
-Token-level logprobs are the source of truth. They explain *why* a segment needs review: weak tokens, ambiguous alternatives, low margins, high entropy, or review spans.
+| Layer | Where | Notes |
+|-------|-------|-------|
+| Per-token logprobs | `mt/lib_mt_confidence.py`, `qe/lib_prompt_logprobs.py` | Source of truth |
+| Per-token derived signals | same files | top1−top2 margin, top-k entropy, runner-up |
+| Aggregates | same files | `mean_logprob`, `sum_logprob`, `min_logprob`, `max_logprob`, `perplexity_proxy`, `n_tokens` |
+| Distributional summary | `content_token_summary` | mean/min lexical prob, weak/ambiguous shares, mean entropy, mean margin, composite score |
+| Span detector | `find_uncertain_spans`, `find_low_confidence_spans` | Contiguous weak / ambiguous regions |
+| Language-script drift | `detect_language_drift` | Top-k alternatives in a different Unicode script |
+| Candidate ranker | `qe/compare_candidates.py` | Order by `mean_logprob` |
+| Optional preset | `mt/presets/v01_heuristic.py` | One illustrative mapping from numbers onto bands; **opt-in, not wired into the CLIs** |
 
-For segment-level decisions, use **`mean_logprob`** as the default raw score. It is length-normalised and safer than `sum_logprob` when comparing translations with different token counts.
+All thresholds the code uses internally are exposed as module constants in `mt.lib_mt_confidence` and printed inline by `format_signal_report` so they are use as knobs rather than laws.
 
-**Plausibility band** is a coarse heuristic over raw `mean_logprob` (`> -1` high, `-1` to `-3` moderate, `< -3` low). It is not calibrated and should only be compared under the same model and prompt template.
+---
 
-**Review recommendation** should come from **terminology review signal** and **review spans** — not from a 0-1 display score.
+## Open directions
 
-For research or production, store raw fields separately: `mean_logprob`, `min_logprob`, `margin`, `entropy`, `perplexity_proxy`, and `n_tokens`.
+This repo is intentionally a seed. The signals it exposes are the input to a much larger question: *how do we turn cheap model-internal uncertainty into helpful QE signal?* Concrete extension paths:
 
-## Metrics
+1. **Calibration against human judgement.** Correlate `mean_logprob`, `min_logprob`, `mean_top_entropy`, and `composite_score` against MQM, DA, or post-edit effort on a held-out set. Learn band cutoffs instead of hand-picking them.
+2. **Per-model and per-language priors.** Logprob scales drift across models and language pairs; a per-pair recalibration (z-score or percentile mapping) is an obvious next step.
+3. **Length-bias correction.** `mean_logprob` rewards short translations. Try `mean_logprob / log(n_tokens)`, content-token-only means, or a length-conditioned regression.
+4. **Self-consistency / agreement.** Sample N translations at `temperature > 0`; measure agreement, BLEU/chrF among samples, or content-token disagreement. The agreement demo is wired but unused at the CLI surface.
 
-| Metric | What it measures | Use for |
-|--------|-----------------|---------|
-| **Mean logprob** | Overall token-level plausibility | Segment-level raw score |
-| **Min logprob** | Weakest single token | Spot mistranslations, rare words |
-| **Entropy** | Ambiguity across top-k alternatives | Find positions with multiple valid options |
-| **Margin (top1 − top2)** | How decisive the model was | Flag near-synonyms, close alternatives |
-| **Review spans** | Contiguous weak or ambiguous regions | Target human review efficiently |
-| **Terminology review signal** | Lexical uncertainty in content tokens | Drive review recommendation |
-| **Agreement (n samples)** | Consistency across N generations | Detect unstable translations |
-| **Plausibility band** | Coarse mean-logprob band | Quick heuristic only — not calibrated |
-| **Perplexity proxy** | exp(−mean logprob) | Compare across segments |
-| **n_tokens** | Number of scored target tokens | Interpret score stability and length effects |
+
+PRs and issues exploring any of these are welcome — see [`CONTRIBUTING.md`](CONTRIBUTING.md).
 
 ---
 
@@ -167,7 +173,7 @@ Runnable offline against included sample data — no server needed.
 
 | Script | Shows |
 |--------|-------|
-| `translate_with_confidence.py` | Full review-signal report from generation logprobs |
+| `translate_with_confidence.py` | Full signal report from generation logprobs |
 
 **QE demos** (`demos/qe/`):
 
@@ -181,11 +187,11 @@ Runnable offline against included sample data — no server needed.
 | `margin.py` | Alignment gaps | Decisiveness at each position |
 | `low_confidence_spans.py` | Alignment gaps | Contiguous weak regions |
 
-Offline QE demos (`average_logprob`, `margin`, `entropy`, `weakest_span`, `low_confidence_spans`) and bundled `QElogprob.json` currently have **prompt/hypothesis alignment gaps**. Do not treat their numeric output as validated QE until fixed. Use live `qe/score_live.py` and `qe/compare_candidates.py` for reliable scoring.
+The five offline QE demos with the "alignment gaps" label, plus the bundled `QElogprob.json`, currently have prompt / hypothesis alignment issues. Fixing them is a good first contribution; the alignment recipe is in `qe/lib_prompt_logprobs.py`.
 
 ```bash
-python3 demos/qe/rank_candidates.py      # ranking + limitation case
-python3 demos/qe/agreement.py            # self-consistency
+python3 demos/qe/rank_candidates.py
+python3 demos/qe/agreement.py
 python3 demos/mt/translate_with_confidence.py
 ```
 
@@ -195,19 +201,27 @@ python3 demos/mt/translate_with_confidence.py
 
 ```
 logprobs-mt-qe/
-├── mt/                     # Translate + review signals
+├── mt/
 │   ├── translate.py
 │   ├── batch_translate.py
-│   └── lib_mt_confidence.py
-├── qe/                     # Score existing translations
+│   ├── lib_mt_confidence.py
+│   └── presets/
+│       └── v01_heuristic.py
+├── qe/
 │   ├── score_json.py
 │   ├── score_live.py
 │   ├── compare_candidates.py
 │   └── lib_prompt_logprobs.py
-├── demos/                  # Offline-runnable demos
+├── demos/
 │   ├── mt/
 │   └── qe/
-├── LICENSE                 # MIT
+├── docs/
+│   └── signals.md
+├── notebooks/
+│   └── calibrate_against_mqm.ipynb
+├── CONTRIBUTING.md
+├── GETTING_STARTED.md
+├── LICENSE
 └── pyproject.toml
 ```
 
@@ -217,19 +231,18 @@ logprobs-mt-qe/
 
 Any OpenAI-compatible endpoint:
 
-- **vLLM** — full support (`prompt_logprobs` + generation `logprobs`)
-- **llama.cpp server** — OpenAI-compatible endpoint
-- **Ollama** — check version for `prompt_logprobs` support
+- **vLLM** — full support (`prompt_logprobs` + generation `logprobs`).
+- **llama.cpp server** — OpenAI-compatible endpoint.
+- **Ollama** — check version for `prompt_logprobs` support.
 
-QE scripts default to `/v1/completions` so prompt scoring uses exactly the text sent in `prompt`. Chat completions can apply a chat template with hidden role/special tokens, making marker alignment more fragile. MT generation defaults to `/v1/chat/completions` because it asks the model to produce a translation.
+QE scripts default to `/v1/completions` so prompt scoring uses exactly the text sent in `prompt`. Chat completions can apply a chat template with hidden role / special tokens, making marker alignment more fragile. MT generation defaults to `/v1/chat/completions` because it asks the model to produce a translation.
 
 ---
 
 ## Limitations
 
-- **Plausibility ≠ human adequacy** — fluent but unfaithful translations can outscore correct ones.
-- **Terminology review signals drive triage** — use spans and terminology labels, not a global score alone.
-- **Prompt format matters** — only compare scores from the same prompt template.
-- **vLLM `prompt_logprobs` ≠ generation `logprobs`** — different JSON structures; this repo handles both.
-- **Forced tokens may not appear in top-k** — always pass `--hypothesis` for accurate QE alignment.
-- **Offline QE demos** — several bundled demos and `QElogprob.json` need alignment fixes before their numbers can be trusted.
+- **Plausibility ≠ human adequacy.** Fluent-but-unfaithful translations can outscore correct ones.
+- **Prompt format matters.** Only compare scores from the same prompt template.
+- **vLLM `prompt_logprobs` ≠ generation `logprobs`.** Different JSON structures; this repo handles both.
+- **Forced tokens may not appear in top-k.** Pass `--hypothesis` for accurate QE alignment.
+- **Offline QE demos.** Several bundled demos and `QElogprob.json` need alignment fixes before their numbers can be trusted.

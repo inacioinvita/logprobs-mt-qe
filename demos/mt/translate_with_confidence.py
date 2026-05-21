@@ -8,10 +8,13 @@ Unlike prompt_logprobs (QE demos), which teacher-force a *fixed* hypothesis
 and measure how plausible the model finds it, generation logprobs come free
 with every translation call.
 
-Key concepts:
-  - Mean logprob: raw length-normalised generation plausibility.
-  - Ambiguous tokens: close margin between top-1 and top-2.
-  - Review spans: contiguous regions where the model struggled.
+Key signals shown:
+  - Aggregate: mean_logprob, perplexity_proxy, display_score (rescaled).
+  - Distributional: composite_score, mean_prob, min_lexical_prob,
+    mean_top_entropy, mean_margin, weak_share, ambiguous_share.
+  - Token-level: per-token logprob, prob, top1-top2 margin, entropy.
+  - Spans: contiguous regions where the model spread probability mass.
+  - Drift: top-k alternatives in a different Unicode script.
 
 Offline demo
 ------------
@@ -38,12 +41,12 @@ _ROOT = str(Path(__file__).resolve().parent.parent.parent)
 sys.path.insert(0, _ROOT)
 
 from mt.lib_mt_confidence import (
+    detect_language_drift,
     find_uncertain_spans,
     flag_ambiguous_tokens,
-    format_review_report,
+    format_signal_report,
     generation_tokens_from_response,
     mean_logprob,
-    terminology_assessment,
 )
 
 MOCK_RESPONSE = {
@@ -187,18 +190,12 @@ def run_offline_demo() -> None:
     mean_lp = mean_logprob(logprobs)
     ambiguous = flag_ambiguous_tokens(gen_tokens, margin_threshold=1.0)
     uncertain = find_uncertain_spans(gen_tokens)
+    drift = detect_language_drift(gen_tokens)
 
-    report = format_review_report(
-        translation, gen_tokens, mean_lp, ambiguous, uncertain,
+    report = format_signal_report(
+        translation, gen_tokens, mean_lp, ambiguous, uncertain, drift=drift,
     )
     print(report)
-    print()
-
-    terminology = terminology_assessment(gen_tokens)
-    if terminology["review_recommendation"] == "no terminology review triggered":
-        print("\u2713 No terminology review triggered")
-    else:
-        print(f"\u26a0 {terminology['review_recommendation'].capitalize()}")
 
 
 def run_live_demo(
@@ -232,9 +229,10 @@ def run_live_demo(
     mean_lp = mean_logprob(logprobs)
     ambiguous = flag_ambiguous_tokens(gen_tokens)
     uncertain = find_uncertain_spans(gen_tokens)
+    drift = detect_language_drift(gen_tokens)
 
-    report = format_review_report(
-        translation, gen_tokens, mean_lp, ambiguous, uncertain,
+    report = format_signal_report(
+        translation, gen_tokens, mean_lp, ambiguous, uncertain, drift=drift,
     )
     print(report)
 

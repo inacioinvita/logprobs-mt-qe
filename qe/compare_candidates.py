@@ -130,7 +130,7 @@ def main() -> int:
         )
 
     print()
-    print("Best:", rows[0][0], "—", format_aggregate_line(rows[0][1]))
+    print("Top by mean_logprob:", rows[0][0], "\u2014", format_aggregate_line(rows[0][1]))
     return 0
 
 
