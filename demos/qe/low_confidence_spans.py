@@ -12,31 +12,26 @@ Adjust the threshold based on your quality bar:
 """
 from __future__ import annotations
 
-import json
 import sys
 from pathlib import Path
 
 _ROOT = str(Path(__file__).resolve().parent.parent.parent)
 sys.path.insert(0, _ROOT)
-sys.path.insert(0, str(Path(_ROOT) / "qe"))
 
-from lib_prompt_logprobs import (
+from demos.qe.sample_ptbr_en import CANDIDATE_A, MARKER, PROMPT_LOGPROBS
+from qe.lib_prompt_logprobs import (
     extract_hypothesis_tokens,
     find_low_confidence_spans,
     hypothesis_text,
 )
 
-DATA = Path(_ROOT) / "QElogprob.json"
-
-MARKER = "German translation:"
-HYPOTHESIS = "Der Zauberer wirkt einen mächtigen Zauberspruch."
-THRESHOLD = -2.0
+HYPOTHESIS = CANDIDATE_A
+THRESHOLD = -0.9
 
 
 def main() -> None:
-    data = json.loads(DATA.read_text())
     tokens = extract_hypothesis_tokens(
-        data["prompt_logprobs"], marker=MARKER, hypothesis=HYPOTHESIS,
+        PROMPT_LOGPROBS, marker=MARKER, hypothesis=HYPOTHESIS,
     )
     if not tokens:
         print("ERROR: no hypothesis tokens found.")

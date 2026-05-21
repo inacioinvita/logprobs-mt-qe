@@ -6,7 +6,7 @@ Usage
 python3 -m mt.batch_translate \\
   --base-url http://localhost:8000/v1/chat/completions \\
   --model <model-id> \\
-  --lang German \\
+  --lang English \\
   --input segments.txt \\
   --output results.tsv \\
   --flag-for-review review.txt
@@ -18,15 +18,15 @@ import argparse
 import sys
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).resolve().parent))
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from lib_mt_confidence import (
+from mt.lib_mt_confidence import (
     confidence_score,
     find_uncertain_spans,
     flag_ambiguous_tokens,
     generation_tokens_from_response,
 )
-from translate import DEFAULT_BASE_URL, DEFAULT_MODEL, translate
+from mt.translate import DEFAULT_BASE_URL, DEFAULT_MODEL, translate
 
 
 def main(argv: list[str] | None = None) -> None:
@@ -35,7 +35,7 @@ def main(argv: list[str] | None = None) -> None:
     )
     ap.add_argument("--base-url", default=DEFAULT_BASE_URL, help="API endpoint URL")
     ap.add_argument("--model", default=DEFAULT_MODEL, help="Model identifier")
-    ap.add_argument("--lang", required=True, help="Target language (e.g. German)")
+    ap.add_argument("--lang", required=True, help="Target language (e.g. English)")
     ap.add_argument("--input", required=True, help="Input file (one source segment per line)")
     ap.add_argument("--output", required=True, help="Output TSV file")
     ap.add_argument("--temperature", type=float, default=0.0, help="Sampling temperature (default 0)")
@@ -103,7 +103,7 @@ def main(argv: list[str] | None = None) -> None:
 
     print(file=sys.stderr)
     print(f"Total segments:  {total}", file=sys.stderr)
-    print(f"Mean confidence: {mean_conf:.4f}", file=sys.stderr)
+    print(f"Mean model plausibility: {mean_conf:.4f}", file=sys.stderr)
     print(f"Flagged:         {len(flagged)} ({pct_flagged:.1f}%)", file=sys.stderr)
     print(f"Output:          {args.output}", file=sys.stderr)
     if args.flag_for_review and flagged:

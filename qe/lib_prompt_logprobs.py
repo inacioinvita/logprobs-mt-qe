@@ -7,7 +7,7 @@ import math
 import re
 from typing import Any
 
-DEFAULT_BASE_URL = "http://localhost:8000/v1/chat/completions"
+DEFAULT_BASE_URL = "http://localhost:8000/v1/completions"
 DEFAULT_MODEL = ""
 
 _TEMPLATE_STOP = re.compile(
@@ -186,7 +186,7 @@ def _should_stop(hypothesis: list[tuple[str, float]], token: str) -> bool:
 
 def extract_hypothesis_tokens(
     prompt_logprobs: list[Any] | None,
-    marker: str = "German translation:",
+    marker: str = "translation:",
     *,
     hypothesis: str | None = None,
 ) -> list[tuple[str, float]]:
@@ -341,10 +341,18 @@ def hypothesis_text(hypothesis: list[tuple[str, float]]) -> str:
 def build_scoring_prompt(source: str, hypothesis: str, lang: str) -> str:
     """Build the scoring prompt with source and hypothesis for teacher-forced logprob extraction."""
     return (
-        f"Translate the following English text to {lang}:\n\n"
+        f"Translate the following text to {lang}:\n\n"
         f"{source.strip()}\n\n"
         f"{lang} translation: {hypothesis.strip()}"
     )
+
+
+def prompt_logprobs_from_response(data: dict[str, Any]) -> list[Any] | None:
+    """Return vLLM prompt_logprobs from either OpenAI-compatible response location."""
+    prompt_logprobs = data.get("prompt_logprobs")
+    if prompt_logprobs is not None:
+        return prompt_logprobs
+    return data.get("choices", [{}])[0].get("prompt_logprobs")
 
 
 def scores_from_response(
@@ -354,7 +362,7 @@ def scores_from_response(
     hypothesis: str | None = None,
 ) -> tuple[list[tuple[str, float]], dict[str, float | int]]:
     hypothesis_tokens = extract_hypothesis_tokens(
-        data.get("prompt_logprobs"),
+        prompt_logprobs_from_response(data),
         marker=marker,
         hypothesis=hypothesis,
     )

@@ -6,8 +6,8 @@ Usage
 python3 -m mt.translate \\
   --base-url http://localhost:8000/v1/chat/completions \\
   --model <model-id> \\
-  --lang German \\
-  --source "The wizard casts a powerful spell."
+  --lang English \\
+  --source "A equipe de atendimento abriu um tíquete, mas o pedido ficou parado..."
 """
 
 from __future__ import annotations
@@ -18,14 +18,15 @@ import sys
 import urllib.request
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).resolve().parent))
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from lib_mt_confidence import (
+from mt.lib_mt_confidence import (
     confidence_score,
     find_uncertain_spans,
     flag_ambiguous_tokens,
     format_confidence_report,
     generation_tokens_from_response,
+    terminology_assessment,
 )
 
 DEFAULT_BASE_URL = "http://localhost:8000/v1/chat/completions"
@@ -53,15 +54,31 @@ def translate(
     api_key: str | None = None,
 ) -> dict:
     """Call the API and return the raw response dict."""
-    prompt = f"Translate the following text to {lang}:\n\n{source}"
-    payload: dict = {
-        "model": model,
-        "messages": [{"role": "user", "content": prompt}],
-        "temperature": temperature,
-        "max_tokens": max_tokens,
-        "logprobs": True,
-        "top_logprobs": 5,
-    }
+    prompt = (
+        f"Translate the following text to {lang}. "
+        "Output translation only, with no notes, alternatives, quotation marks, or explanation.\n\n"
+        f"{source.strip()}\n\n"
+        f"{lang}:"
+    )
+    if "/chat/completions" in base_url:
+        payload: dict = {
+            "model": model,
+            "messages": [{"role": "user", "content": prompt}],
+            "temperature": temperature,
+            "max_tokens": max_tokens,
+            "logprobs": True,
+            "top_logprobs": 5,
+        }
+    else:
+        payload = {
+            "model": model,
+            "prompt": prompt,
+            "temperature": temperature,
+            "max_tokens": max_tokens,
+            "logprobs": 5,
+            "top_logprobs": 5,
+            "stop": ["\n"],
+        }
     return _post_json(base_url, payload, api_key)
 
 
@@ -71,7 +88,7 @@ def main(argv: list[str] | None = None) -> None:
     )
     ap.add_argument("--base-url", default=DEFAULT_BASE_URL, help="API endpoint URL")
     ap.add_argument("--model", default=DEFAULT_MODEL, help="Model identifier")
-    ap.add_argument("--lang", required=True, help="Target language (e.g. German)")
+    ap.add_argument("--lang", required=True, help="Target language (e.g. English)")
     ap.add_argument("--source", required=True, help="Source text to translate")
     ap.add_argument("--temperature", type=float, default=0.0, help="Sampling temperature (default 0)")
     ap.add_argument("--max-tokens", type=int, default=256, help="Max generation tokens (default 256)")
@@ -95,7 +112,8 @@ def main(argv: list[str] | None = None) -> None:
         with open(args.save_json, "w") as f:
             json.dump(data, f, indent=2, ensure_ascii=False)
 
-    translation = data["choices"][0]["message"]["content"]
+    choice = data["choices"][0]
+    translation = choice.get("message", {}).get("content", choice.get("text", "")).strip()
     gen_tokens = generation_tokens_from_response(data)
 
     if not gen_tokens:
@@ -112,12 +130,15 @@ def main(argv: list[str] | None = None) -> None:
     print(report)
 
     print()
-    if conf >= args.confidence_threshold:
-        print("\u2713 High confidence")
+    terminology = terminology_assessment(gen_tokens)
+    if terminology["qe_proxy"] != "high":
+        print(f"\u26a0 {terminology['qe_proxy'].capitalize()}")
+    elif conf >= args.confidence_threshold:
+        print("\u2713 High model plausibility")
     elif conf >= args.confidence_threshold * 0.6:
         print("\u26a0 Review recommended")
     else:
-        print("\u2717 Low confidence")
+        print("\u2717 Low model plausibility")
 
 
 if __name__ == "__main__":

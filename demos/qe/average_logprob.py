@@ -9,35 +9,28 @@ translation more plausible overall.  Useful as a single-number segment-level
 QE score that correlates with human judgements of fluency.
 
 Interpretation guide:
-    mean > -1.0   →  high confidence (model strongly agrees)
-    -1 to -3      →  moderate confidence
-    < -3          →  low confidence (review recommended)
+    mean > -1.0   ->  high plausibility
+    -1 to -3      ->  moderate plausibility
+    < -3          ->  low plausibility (review recommended)
 """
 from __future__ import annotations
 
-import json
 import math
 import sys
 from pathlib import Path
 
 _ROOT = str(Path(__file__).resolve().parent.parent.parent)
 sys.path.insert(0, _ROOT)
-sys.path.insert(0, str(Path(_ROOT) / "qe"))
 
-from lib_prompt_logprobs import extract_hypothesis_tokens, aggregate_scores
+from demos.qe.sample_ptbr_en import CANDIDATE_A, MARKER, PROMPT_LOGPROBS
+from qe.lib_prompt_logprobs import aggregate_scores, extract_hypothesis_tokens
 
-DATA = Path(_ROOT) / "QElogprob.json"
-
-MARKER = "German translation:"
-HYPOTHESIS = "Der Zauberer wirkt einen mächtigen Zauberspruch."
+HYPOTHESIS = CANDIDATE_A
 
 
 def main() -> None:
-    data = json.loads(DATA.read_text())
-    prompt_logprobs = data["prompt_logprobs"]
-
     tokens = extract_hypothesis_tokens(
-        prompt_logprobs, marker=MARKER, hypothesis=HYPOTHESIS,
+        PROMPT_LOGPROBS, marker=MARKER, hypothesis=HYPOTHESIS,
     )
     if not tokens:
         print("ERROR: no hypothesis tokens found — check marker / hypothesis.")
@@ -60,14 +53,14 @@ def main() -> None:
 
     m = agg["mean_logprob"]
     if m > -1.0:
-        band = "HIGH confidence"
+        band = "HIGH plausibility"
     elif m > -3.0:
-        band = "MODERATE confidence"
+        band = "MODERATE plausibility"
     else:
-        band = "LOW confidence"
-    print(f"\n→ mean_logprob {m:.4f} → {band}")
+        band = "LOW plausibility"
+    print(f"\n-> mean_logprob {m:.4f} -> {band}")
     print(
-        "\nHigher mean → model finds the translation more plausible overall.\n"
+        "\nHigher mean -> model finds the translation more plausible overall.\n"
         "Useful as a single-number segment-level QE score."
     )
 

@@ -12,29 +12,24 @@ near-synonym or alternative phrasing — worth reviewing.
 """
 from __future__ import annotations
 
-import json
 import sys
 from pathlib import Path
 
 _ROOT = str(Path(__file__).resolve().parent.parent.parent)
 sys.path.insert(0, _ROOT)
-sys.path.insert(0, str(Path(_ROOT) / "qe"))
 
-from lib_prompt_logprobs import (
+from demos.qe.sample_ptbr_en import CANDIDATE_A, MARKER, PROMPT_LOGPROBS
+from qe.lib_prompt_logprobs import (
     _find_marker_end_index,
     margin_top1_top2,
     top_logprobs_from_position,
 )
 
-DATA = Path(_ROOT) / "QElogprob.json"
-
-MARKER = "German translation:"
-HYPOTHESIS = "Der Zauberer wirkt einen mächtigen Zauberspruch."
+HYPOTHESIS = CANDIDATE_A
 
 
 def main() -> None:
-    data = json.loads(DATA.read_text())
-    prompt_logprobs = data["prompt_logprobs"]
+    prompt_logprobs = PROMPT_LOGPROBS
 
     marker_end = _find_marker_end_index(prompt_logprobs, MARKER)
     if marker_end < 0:

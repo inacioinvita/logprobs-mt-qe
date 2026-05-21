@@ -27,6 +27,8 @@ from pathlib import Path
 _ROOT = str(Path(__file__).resolve().parent.parent.parent)
 sys.path.insert(0, _ROOT)
 
+from demos.qe.sample_ptbr_en import AGREEMENT_CONSISTENT, AGREEMENT_INCONSISTENT
+
 
 def agreement_score(mean_logprobs: list[float]) -> float:
     """Normalised self-consistency: 1.0 = all samples score identically."""
@@ -41,8 +43,8 @@ def agreement_score(mean_logprobs: list[float]) -> float:
 
 
 def main() -> None:
-    scores_consistent = [-1.25, -1.30, -1.22]
-    scores_inconsistent = [-0.80, -3.50, -1.90]
+    scores_consistent = AGREEMENT_CONSISTENT
+    scores_inconsistent = AGREEMENT_INCONSISTENT
 
     print("=" * 60)
     print("Example A — Consistent translations")

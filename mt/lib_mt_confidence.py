@@ -10,8 +10,19 @@ APIs when ``logprobs: true, top_logprobs: N`` are set.
 from __future__ import annotations
 
 import math
+import re
 import unicodedata
 from typing import Any
+
+_SPECIAL_TOKEN = re.compile(r"^<[^>]+>$")
+_PUNCT_OR_SPACE = re.compile(r"^[\s\W_]+$")
+_FUNCTION_WORDS = {
+    "a", "an", "and", "are", "as", "at", "be", "been", "being", "but", "by",
+    "for", "from", "had", "has", "have", "he", "her", "his", "if", "in",
+    "is", "it", "its", "not", "of", "on", "or", "she", "that", "the",
+    "their", "there", "they", "this", "to", "was", "were", "whether", "which",
+    "who", "will", "with", "would",
+}
 
 
 # ---------------------------------------------------------------------------
@@ -24,16 +35,40 @@ def generation_tokens_from_response(data: dict[str, Any]) -> list[dict]:
     Each returned dict has keys: *token*, *logprob*, *prob*, *top_logprobs*
     (list of ``{"token": str, "logprob": float}``).
     """
+    out: list[dict] = []
     content = (
         data.get("choices", [{}])[0]
         .get("logprobs", {})
         .get("content", [])
     )
-    out: list[dict] = []
+    if not content:
+        logprobs = data.get("choices", [{}])[0].get("logprobs", {})
+        tokens = logprobs.get("tokens", [])
+        token_logprobs = logprobs.get("token_logprobs", [])
+        top_logprobs = logprobs.get("top_logprobs", [])
+        for tok, lp, tops in zip(tokens, token_logprobs, top_logprobs):
+            if lp is None:
+                continue
+            if _SPECIAL_TOKEN.match(tok.strip()):
+                continue
+            out_top = [
+                {"token": alt_tok, "logprob": float(alt_lp)}
+                for alt_tok, alt_lp in (tops or {}).items()
+            ]
+            out.append({
+                "token": tok,
+                "logprob": float(lp),
+                "prob": math.exp(float(lp)),
+                "top_logprobs": out_top,
+            })
+        return out
     for entry in content:
         lp = entry.get("logprob", 0.0)
+        token = entry.get("token", "")
+        if _SPECIAL_TOKEN.match(token.strip()):
+            continue
         out.append({
-            "token": entry.get("token", ""),
+            "token": token,
             "logprob": float(lp),
             "prob": math.exp(float(lp)),
             "top_logprobs": [
@@ -45,20 +80,114 @@ def generation_tokens_from_response(data: dict[str, Any]) -> list[dict]:
 
 
 # ---------------------------------------------------------------------------
-# Confidence score
+# Model plausibility score
 # ---------------------------------------------------------------------------
 
 def confidence_score(logprobs: list[float]) -> float:
-    """Map mean logprob to a 0–1 confidence score (sigmoid-style).
+    """Map mean logprob to a 0-1 model plausibility display score.
 
     ``score = 1 / (1 + exp(-mean_logprob - 1))``
 
-    Landmarks: mean_lp=0 → ~0.73, mean_lp=-1 → 0.5, mean_lp=-3 → ~0.12.
+    Landmarks: mean_lp=0 -> ~0.73, mean_lp=-1 -> 0.5, mean_lp=-3 -> ~0.12.
+    This is intentionally lightweight and not calibrated.
     """
     if not logprobs:
         return 0.0
     mean_lp = sum(logprobs) / len(logprobs)
     return 1.0 / (1.0 + math.exp(-mean_lp - 1.0))
+
+
+def token_margin(tok: dict) -> float:
+    tops = tok.get("top_logprobs", [])
+    if len(tops) < 2:
+        return float("inf")
+    return tops[0]["logprob"] - tops[1]["logprob"]
+
+
+def runner_up(tok: dict) -> str | None:
+    tops = tok.get("top_logprobs", [])
+    if len(tops) < 2:
+        return None
+    return tops[1]["token"]
+
+
+def is_punctuation_or_function_word(tok: dict) -> bool:
+    text = tok.get("token", "").strip().lower()
+    if not text:
+        return True
+    if _PUNCT_OR_SPACE.match(text):
+        return True
+    return text in _FUNCTION_WORDS
+
+
+def is_ambiguous_token(tok: dict) -> bool:
+    return tok["prob"] < 0.80 or token_margin(tok) < 1.00
+
+
+def is_low_confidence_token(tok: dict) -> bool:
+    return (
+        tok["prob"] < 0.60
+        or token_margin(tok) < 0.40
+        or tok["logprob"] < -0.75
+    )
+
+
+def terminology_assessment(gen_tokens: list[dict]) -> dict[str, float | str | int]:
+    """Composite content-token score so easy punctuation cannot hide weak terms."""
+    content_tokens = [t for t in gen_tokens if not is_punctuation_or_function_word(t)]
+    lexical_tokens = [t for t in gen_tokens if t.get("token", "").strip() and not _PUNCT_OR_SPACE.match(t["token"].strip())]
+    if not content_tokens:
+        return {
+            "confidence": 0.0,
+            "mean_prob": 0.0,
+            "min_prob": 0.0,
+            "weak_share": 0.0,
+            "ambiguous_share": 0.0,
+            "n_content_tokens": 0,
+            "label": "low",
+            "qe_proxy": "review recommended",
+        }
+
+    probs = [t["prob"] for t in content_tokens]
+    lexical_probs = [t["prob"] for t in lexical_tokens]
+    weak_lexical_count = sum(is_low_confidence_token(t) for t in lexical_tokens)
+    ambiguous_count = sum(is_ambiguous_token(t) for t in content_tokens)
+    weak_share = sum(is_low_confidence_token(t) for t in content_tokens) / len(content_tokens)
+    ambiguous_share = ambiguous_count / len(content_tokens)
+    mean_prob = sum(probs) / len(probs)
+    min_prob = min(lexical_probs or probs)
+    confidence = (
+        0.50 * mean_prob
+        + 0.25 * min_prob
+        + 0.15 * (1 - weak_share)
+        + 0.10 * (1 - ambiguous_share)
+    )
+
+    if weak_share >= 0.15 or min_prob < 0.50 or (weak_lexical_count >= 1 and ambiguous_count >= 1):
+        label = "medium-low"
+        qe_proxy = "review recommended"
+    elif ambiguous_share >= 0.08 or ambiguous_count >= 2:
+        label = "medium"
+        qe_proxy = "terminology review recommended"
+    elif confidence >= 0.75:
+        label = "high"
+        qe_proxy = "high"
+    else:
+        label = "medium"
+        qe_proxy = "review terminology"
+
+    return {
+        "confidence": confidence,
+        "mean_prob": mean_prob,
+        "min_prob": min_prob,
+        "weak_share": weak_share,
+        "ambiguous_share": ambiguous_share,
+        "n_content_tokens": len(content_tokens),
+        "weak_lexical_count": weak_lexical_count,
+        "ambiguous_count": ambiguous_count,
+        "label": label,
+        "qe_proxy": qe_proxy,
+    }
 
 
 # ---------------------------------------------------------------------------
@@ -78,13 +207,13 @@ def flag_ambiguous_tokens(
         tops = tok.get("top_logprobs", [])
         if len(tops) < 2:
             continue
-        margin = tops[0]["logprob"] - tops[1]["logprob"]
-        if margin < margin_threshold:
+        margin = token_margin(tok)
+        if is_ambiguous_token(tok) or margin < margin_threshold:
             flagged.append({
                 "index": i,
                 "token": tok["token"],
                 "logprob": tok["logprob"],
-                "runner_up": tops[1]["token"],
+                "runner_up": runner_up(tok),
                 "margin": margin,
             })
     return flagged
@@ -143,7 +272,7 @@ def detect_language_drift(
 
 def find_uncertain_spans(
     gen_tokens: list[dict],
-    threshold: float = -2.0,
+    threshold: float = -0.75,
 ) -> list[dict]:
     """Contiguous runs of tokens with ``logprob < threshold``.
 
@@ -151,12 +280,47 @@ def find_uncertain_spans(
     """
     spans: list[dict] = []
     current: dict | None = None
+    weak_indexes = {
+        i
+        for i, tok in enumerate(gen_tokens)
+        if tok.get("token", "").strip()
+        and not _PUNCT_OR_SPACE.match(tok["token"].strip())
+        and (is_low_confidence_token(tok) or tok["logprob"] < threshold)
+    }
+    review_indexes = {
+        i
+        for i, tok in enumerate(gen_tokens)
+        if not is_punctuation_or_function_word(tok)
+        and (is_low_confidence_token(tok) or is_ambiguous_token(tok) or tok["logprob"] < threshold)
+    }
+    expanded_indexes = set(review_indexes | weak_indexes)
+    for i in review_indexes | weak_indexes:
+        added = 0
+        for j in range(i + 1, len(gen_tokens)):
+            if _PUNCT_OR_SPACE.match(gen_tokens[j].get("token", "").strip()):
+                break
+            if is_punctuation_or_function_word(gen_tokens[j]):
+                expanded_indexes.add(j)
+                continue
+            expanded_indexes.add(j)
+            added += 1
+            if added >= 2:
+                break
+
     for i, tok in enumerate(gen_tokens):
-        if tok["logprob"] < threshold:
+        if i in expanded_indexes:
             if current is None:
-                current = {"start": i, "tokens": [], "logprobs": []}
+                current = {"start": i, "tokens": [], "logprobs": [], "reasons": []}
             current["tokens"].append(tok["token"])
             current["logprobs"].append(tok["logprob"])
+            if i in weak_indexes or (i in review_indexes and is_ambiguous_token(tok)):
+                margin = token_margin(tok)
+                kind = "weak token" if i in weak_indexes else "ambiguous token"
+                reason = f"{kind} {tok['token']!r}: prob={tok['prob']:.3f}, margin={margin:.3f}"
+                alt = runner_up(tok)
+                if alt:
+                    reason += f", runner-up={alt!r}"
+                current["reasons"].append(reason)
         else:
             if current is not None:
                 current["end"] = i
@@ -192,24 +356,39 @@ def format_confidence_report(
     """Format a human-readable confidence report string."""
     lines: list[str] = []
 
-    level = "high" if confidence >= 0.6 else "medium" if confidence >= 0.4 else "low"
+    fluency = "high" if confidence >= 0.6 else "medium" if confidence >= 0.4 else "low"
+    terminology = terminology_assessment(gen_tokens)
     lines.append(f"Translation: {translation}")
-    lines.append(f"Confidence:  {confidence:.2f} ({level})")
+    lines.append(f"Model plausibility: {confidence:.2f}")
+    lines.append(f"Fluency: {fluency}")
+    lines.append(f"Terminology confidence: {terminology['label']}")
+    lines.append(f"QE proxy: {terminology['qe_proxy']}")
+    lines.append(
+        "Terminology detail: "
+        f"score={terminology['confidence']:.2f}, "
+        f"min_prob={terminology['min_prob']:.2f}, "
+        f"weak_share={terminology['weak_share']:.0%}, "
+        f"ambiguous_share={terminology['ambiguous_share']:.0%}"
+    )
     lines.append("")
 
     lines.append(f"  {'token':<20} {'logprob':>10} {'prob':>8} {'margin':>8}")
     lines.append("  " + "-" * 50)
     for tok in gen_tokens:
         tops = tok.get("top_logprobs", [])
-        margin = tops[0]["logprob"] - tops[1]["logprob"] if len(tops) >= 2 else float("inf")
+        margin = token_margin(tok)
         margin_s = f"{margin:.3f}" if margin != float("inf") else "—"
         lines.append(
             f"  {tok['token']:<20} {tok['logprob']:>10.3f} {tok['prob']:>8.3f} {margin_s:>8}"
         )
 
-    if ambiguous:
+    content_ambiguous = [
+        a for a in ambiguous
+        if not is_punctuation_or_function_word({"token": a["token"]})
+    ]
+    if content_ambiguous:
         lines.append("")
-        for a in ambiguous:
+        for a in content_ambiguous:
             lines.append(
                 f"\u26a0 Ambiguous: \"{a['token']}\" "
                 f"(margin {a['margin']:.2f}, runner-up: \"{a['runner_up']}\")"
@@ -222,9 +401,11 @@ def format_confidence_report(
         lines.append("")
         for s in uncertain_spans:
             lines.append(
-                f"\u2717 Low-confidence span [{s['start']}:{s['end']}]: "
+                f"\u26a0 Review span [{s['start']}:{s['end']}]: "
                 f"\"{s['text']}\" (mean logprob {s['mean_logprob']:.3f})"
             )
+            if s.get("reasons"):
+                lines.append(f"  Reason: {s['reasons'][0]}")
     else:
         lines.append("\u2713 No low-confidence spans detected.")
 

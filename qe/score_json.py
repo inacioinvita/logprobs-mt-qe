@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Score hypothesis tokens from a saved vLLM chat completion JSON."""
+"""Score hypothesis tokens from a saved vLLM completion JSON."""
 
 from __future__ import annotations
 
@@ -8,16 +8,16 @@ import json
 import sys
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).resolve().parent))
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from lib_prompt_logprobs import print_score_report, scores_from_response
+from qe.lib_prompt_logprobs import print_score_report, scores_from_response
 
 
 def main() -> int:
     parser = argparse.ArgumentParser(
         description="Extract prompt_logprobs hypothesis scores from a vLLM response JSON.",
     )
-    parser.add_argument("response_json", type=Path, help="Path to chat completion JSON")
+    parser.add_argument("response_json", type=Path, help="Path to completion JSON")
     parser.add_argument(
         "--marker",
         default="translation:",

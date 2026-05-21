@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Score a fixed hypothesis via live vLLM chat/completions (prompt_logprobs)."""
+"""Score a fixed hypothesis via live vLLM completions (prompt_logprobs)."""
 
 from __future__ import annotations
 
@@ -10,9 +10,9 @@ import urllib.error
 import urllib.request
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).resolve().parent))
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from lib_prompt_logprobs import (
+from qe.lib_prompt_logprobs import (
     DEFAULT_BASE_URL,
     DEFAULT_MODEL,
     build_scoring_prompt,
@@ -32,7 +32,7 @@ def request_prompt_logprobs(
 ) -> dict:
     payload = {
         "model": model,
-        "messages": [{"role": "user", "content": prompt}],
+        "prompt": prompt,
         "max_tokens": 1,
         "temperature": 0,
         "logprobs": True,
@@ -91,7 +91,7 @@ def main() -> int:
     parser.add_argument("--source", required=True, help="Source segment")
     parser.add_argument("--hypothesis", required=True, help="Target hypothesis to score")
     parser.add_argument("--lang", default=None, help="Target language name in prompt (required)")
-    parser.add_argument("--base-url", default=DEFAULT_BASE_URL, help="Chat completions URL")
+    parser.add_argument("--base-url", default=DEFAULT_BASE_URL, help="Completions URL")
     parser.add_argument("--model", default=DEFAULT_MODEL, help="Model id")
     parser.add_argument("--api-key", default=None, help="Optional Bearer token")
     parser.add_argument(

@@ -9,7 +9,7 @@ and measure how plausible the model finds it, generation logprobs come free
 with every translation call.
 
 Key concepts:
-  - Confidence score: sigmoid mapping from mean logprob to 0–1.
+  - Model plausibility score: sigmoid mapping from mean logprob to 0-1.
   - Ambiguous tokens: close margin between top-1 and top-2.
   - Low-confidence spans: contiguous regions where the model struggled.
 
@@ -36,9 +36,8 @@ from pathlib import Path
 
 _ROOT = str(Path(__file__).resolve().parent.parent.parent)
 sys.path.insert(0, _ROOT)
-sys.path.insert(0, str(Path(_ROOT) / "mt"))
 
-from lib_mt_confidence import (
+from mt.lib_mt_confidence import (
     confidence_score,
     find_uncertain_spans,
     flag_ambiguous_tokens,
@@ -50,129 +49,121 @@ MOCK_RESPONSE = {
     "choices": [{
         "message": {
             "role": "assistant",
-            "content": "Der Zauberer wirkt einen mächtigen Zauberspruch.",
+            "content": (
+                "The customer service team opened a support ticket, but the request "
+                "stalled because the supplier had still not sent the corrected state "
+                "registration details or confirmed whether the boleto charge would be "
+                "reversed."
+            ),
         },
         "logprobs": {
             "content": [
                 {
-                    "token": "Der",
-                    "logprob": -0.05,
+                    "token": "The customer service team",
+                    "logprob": -0.34,
                     "top_logprobs": [
-                        {"token": "Der", "logprob": -0.05},
-                        {"token": "Ein", "logprob": -3.1},
-                        {"token": "The", "logprob": -4.8},
-                        {"token": "A", "logprob": -5.9},
-                        {"token": "Die", "logprob": -6.2},
+                        {"token": "The customer service team", "logprob": -0.34},
+                        {"token": "The support team", "logprob": -1.16},
+                        {"token": "The customer care team", "logprob": -1.90},
                     ],
                 },
                 {
-                    "token": " Za",
-                    "logprob": -0.01,
+                    "token": " opened a",
+                    "logprob": -0.28,
                     "top_logprobs": [
-                        {"token": " Za", "logprob": -0.01},
-                        {"token": " Mag", "logprob": -5.2},
-                        {"token": " Wiz", "logprob": -6.8},
-                        {"token": " He", "logprob": -7.1},
-                        {"token": " Zau", "logprob": -7.5},
+                        {"token": " opened a", "logprob": -0.28},
+                        {"token": " created a", "logprob": -0.90},
+                        {"token": " filed a", "logprob": -1.60},
                     ],
                 },
                 {
-                    "token": "uber",
-                    "logprob": -0.002,
+                    "token": " support ticket",
+                    "logprob": -0.52,
                     "top_logprobs": [
-                        {"token": "uber", "logprob": -0.002},
-                        {"token": "uber", "logprob": -7.0},
-                        {"token": "ub", "logprob": -8.5},
-                        {"token": "auber", "logprob": -9.1},
-                        {"token": "UBER", "logprob": -10.0},
+                        {"token": " support ticket", "logprob": -0.52},
+                        {"token": " ticket", "logprob": -0.95},
+                        {"token": " case", "logprob": -1.70},
                     ],
                 },
                 {
-                    "token": "er",
-                    "logprob": -0.003,
+                    "token": ", but the",
+                    "logprob": -0.10,
                     "top_logprobs": [
-                        {"token": "er", "logprob": -0.003},
-                        {"token": "erer", "logprob": -8.2},
-                        {"token": "ers", "logprob": -9.0},
-                        {"token": "erin", "logprob": -9.5},
-                        {"token": "ern", "logprob": -10.1},
+                        {"token": ", but the", "logprob": -0.10},
+                        {"token": ", however the", "logprob": -1.60},
+                        {"token": " and the", "logprob": -2.20},
                     ],
                 },
                 {
-                    "token": " wirkt",
-                    "logprob": -0.42,
+                    "token": " request stalled",
+                    "logprob": -0.86,
                     "top_logprobs": [
-                        {"token": " wirkt", "logprob": -0.42},
-                        {"token": " spricht", "logprob": -1.24},
-                        {"token": " zaubert", "logprob": -2.90},
-                        {"token": " casts", "logprob": -5.1},
-                        {"token": " macht", "logprob": -5.3},
+                        {"token": " request stalled", "logprob": -0.86},
+                        {"token": " request was delayed", "logprob": -1.03},
+                        {"token": " case remained pending", "logprob": -1.18},
                     ],
                 },
                 {
-                    "token": " einen",
+                    "token": " because the",
                     "logprob": -0.08,
                     "top_logprobs": [
-                        {"token": " einen", "logprob": -0.08},
-                        {"token": " ein", "logprob": -2.9},
-                        {"token": " a", "logprob": -5.5},
-                        {"token": " den", "logprob": -5.8},
-                        {"token": " seine", "logprob": -6.1},
+                        {"token": " because the", "logprob": -0.08},
+                        {"token": " since the", "logprob": -1.80},
+                        {"token": " as the", "logprob": -2.10},
                     ],
                 },
                 {
-                    "token": " m\u00e4cht",
-                    "logprob": -0.03,
+                    "token": " supplier",
+                    "logprob": -0.21,
                     "top_logprobs": [
-                        {"token": " m\u00e4cht", "logprob": -0.03},
-                        {"token": " kraft", "logprob": -4.1},
-                        {"token": " stark", "logprob": -4.8},
-                        {"token": " power", "logprob": -6.2},
-                        {"token": " gew", "logprob": -6.5},
+                        {"token": " supplier", "logprob": -0.21},
+                        {"token": " vendor", "logprob": -1.12},
+                        {"token": " provider", "logprob": -1.70},
                     ],
                 },
                 {
-                    "token": "igen",
-                    "logprob": -0.001,
+                    "token": " had still not sent the corrected",
+                    "logprob": -0.24,
                     "top_logprobs": [
-                        {"token": "igen", "logprob": -0.001},
-                        {"token": "ige", "logprob": -7.8},
-                        {"token": "ig", "logprob": -9.2},
-                        {"token": "iger", "logprob": -9.5},
-                        {"token": "igem", "logprob": -10.0},
+                        {"token": " had still not sent the corrected", "logprob": -0.24},
+                        {"token": " had not yet sent the corrected", "logprob": -0.70},
+                        {"token": " still had not provided the corrected", "logprob": -1.20},
                     ],
                 },
                 {
-                    "token": " Zauber",
-                    "logprob": -0.02,
+                    "token": " state registration details",
+                    "logprob": -1.32,
                     "top_logprobs": [
-                        {"token": " Zauber", "logprob": -0.02},
-                        {"token": " Zau", "logprob": -4.5},
-                        {"token": " Spell", "logprob": -6.8},
-                        {"token": " Fluch", "logprob": -7.1},
-                        {"token": " Ban", "logprob": -8.0},
+                        {"token": " state registration details", "logprob": -1.32},
+                        {"token": " state tax registration details", "logprob": -1.38},
+                        {"token": " corrected registration", "logprob": -1.55},
                     ],
                 },
                 {
-                    "token": "spruch",
-                    "logprob": -0.002,
+                    "token": " or confirmed whether the",
+                    "logprob": -0.35,
                     "top_logprobs": [
-                        {"token": "spruch", "logprob": -0.002},
-                        {"token": "sp", "logprob": -8.12},
-                        {"token": "kraft", "logprob": -9.0},
-                        {"token": "trank", "logprob": -9.5},
-                        {"token": "stab", "logprob": -10.2},
+                        {"token": " or confirmed whether the", "logprob": -0.35},
+                        {"token": " nor confirmed if the", "logprob": -0.90},
+                        {"token": " or said whether the", "logprob": -2.10},
                     ],
                 },
                 {
-                    "token": ".",
-                    "logprob": -0.01,
+                    "token": " boleto charge",
+                    "logprob": -1.58,
                     "top_logprobs": [
-                        {"token": ".", "logprob": -0.01},
-                        {"token": "!", "logprob": -4.9},
-                        {"token": ",", "logprob": -6.3},
-                        {"token": ".\n", "logprob": -7.0},
-                        {"token": ".\"", "logprob": -8.1},
+                        {"token": " boleto charge", "logprob": -1.58},
+                        {"token": " payment slip charge", "logprob": -1.62},
+                        {"token": " payment", "logprob": -1.75},
+                    ],
+                },
+                {
+                    "token": " would be reversed.",
+                    "logprob": -0.93,
+                    "top_logprobs": [
+                        {"token": " would be reversed.", "logprob": -0.93},
+                        {"token": " would be refunded.", "logprob": -1.06},
+                        {"token": " would be cancelled.", "logprob": -1.30},
                     ],
                 },
             ],
@@ -203,7 +194,7 @@ def run_offline_demo() -> None:
     print()
 
     if conf >= 0.5:
-        print("\u2713 High confidence")
+        print("\u2713 High model plausibility")
     else:
         print("\u26a0 Review recommended")
 
@@ -211,11 +202,15 @@ def run_offline_demo() -> None:
 def run_live_demo(
     base_url: str,
     model: str,
-    source: str = "The wizard casts a powerful spell.",
-    lang: str = "German",
+    source: str = (
+        "A equipe de atendimento abriu um tíquete, mas o pedido ficou parado porque "
+        "o fornecedor ainda não enviou a inscrição estadual corrigida nem confirmou "
+        "se a cobrança do boleto seria estornada."
+    ),
+    lang: str = "English",
 ) -> None:
     """Call a real API and display the confidence report."""
-    from translate import translate as api_translate
+    from mt.translate import translate as api_translate
 
     print("=" * 60)
     print("LIVE DEMO — calling API")
@@ -247,8 +242,12 @@ def main() -> None:
     ap.add_argument("--live", action="store_true", help="Call a real API instead of using mock data")
     ap.add_argument("--base-url", default="http://localhost:8000/v1/chat/completions")
     ap.add_argument("--model", default="")
-    ap.add_argument("--source", default="The wizard casts a powerful spell.")
-    ap.add_argument("--lang", default="German")
+    ap.add_argument("--source", default=(
+        "A equipe de atendimento abriu um tíquete, mas o pedido ficou parado porque "
+        "o fornecedor ainda não enviou a inscrição estadual corrigida nem confirmou "
+        "se a cobrança do boleto seria estornada."
+    ))
+    ap.add_argument("--lang", default="English")
     args = ap.parse_args()
 
     if args.live:

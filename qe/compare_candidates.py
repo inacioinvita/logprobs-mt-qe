@@ -8,16 +8,16 @@ import json
 import sys
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).resolve().parent))
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from lib_prompt_logprobs import (
+from qe.lib_prompt_logprobs import (
     DEFAULT_BASE_URL,
     DEFAULT_MODEL,
     format_aggregate_line,
     hypothesis_text,
     scores_from_response,
 )
-from score_live import score_hypothesis
+from qe.score_live import score_hypothesis
 
 
 def load_candidates(args: argparse.Namespace) -> list[tuple[str, str]]:
@@ -116,16 +116,17 @@ def main() -> int:
 
     rows.sort(key=lambda r: r[1]["mean_logprob"], reverse=True)
 
-    print(f"{'rank':>4}  {'label':<20}  {'mean_lp':>10}  {'ppl_proxy':>10}  {'n_tok':>6}  hypothesis")
-    print("-" * 100)
+    print(f"{'rank':>4}  {'label':<20}  {'mean_lp':>10}  {'min_lp':>10}  {'ppl_proxy':>10}  {'n_tok':>6}  hypothesis")
+    print("-" * 112)
     for rank, (label, agg, hyp) in enumerate(rows, start=1):
         preview = hyp.replace("\n", "\\n")
         if len(preview) > 48:
             preview = preview[:45] + "..."
         mean_lp = agg["mean_logprob"]
+        min_lp = agg["min_logprob"]
         ppl = agg["perplexity_proxy"]
         print(
-            f"{rank:4d}  {label:<20}  {mean_lp:10.6f}  {ppl:10.6f}  {agg['n_tokens']:6d}  {preview}"
+            f"{rank:4d}  {label:<20}  {mean_lp:10.6f}  {min_lp:10.6f}  {ppl:10.6f}  {agg['n_tokens']:6d}  {preview}"
         )
 
     print()

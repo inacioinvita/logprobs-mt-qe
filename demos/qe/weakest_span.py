@@ -13,27 +13,22 @@ token is usually more informative for actual translation quality issues.
 """
 from __future__ import annotations
 
-import json
 import math
 import sys
 from pathlib import Path
 
 _ROOT = str(Path(__file__).resolve().parent.parent.parent)
 sys.path.insert(0, _ROOT)
-sys.path.insert(0, str(Path(_ROOT) / "qe"))
 
-from lib_prompt_logprobs import extract_hypothesis_tokens
+from demos.qe.sample_ptbr_en import CANDIDATE_A, MARKER, PROMPT_LOGPROBS
+from qe.lib_prompt_logprobs import extract_hypothesis_tokens
 
-DATA = Path(_ROOT) / "QElogprob.json"
-
-MARKER = "German translation:"
-HYPOTHESIS = "Der Zauberer wirkt einen mächtigen Zauberspruch."
+HYPOTHESIS = CANDIDATE_A
 
 
 def main() -> None:
-    data = json.loads(DATA.read_text())
     tokens = extract_hypothesis_tokens(
-        data["prompt_logprobs"], marker=MARKER, hypothesis=HYPOTHESIS,
+        PROMPT_LOGPROBS, marker=MARKER, hypothesis=HYPOTHESIS,
     )
     if not tokens:
         print("ERROR: no hypothesis tokens found.")
@@ -41,7 +36,7 @@ def main() -> None:
 
     ranked = sorted(enumerate(tokens), key=lambda x: x[1][1])
 
-    print("All tokens sorted by logprob (worst → best)")
+    print("All tokens sorted by logprob (worst -> best)")
     print(f"{'pos':>4}  {'token':<20}  {'logprob':>10}  {'prob':>10}")
     print("-" * 50)
     for pos, (tok, lp) in ranked:
@@ -58,7 +53,7 @@ def main() -> None:
             f"\n  Note: position 0 is the first target token after the marker —\n"
             f"  context hasn't built up yet, so low logprob is expected.\n"
             f"  Second worst: {tok2!r} at position {pos2}"
-            f" (logprob {lp2:.4f}) — often more informative."
+            f" (logprob {lp2:.4f}) - often more informative."
         )
 
     print(
