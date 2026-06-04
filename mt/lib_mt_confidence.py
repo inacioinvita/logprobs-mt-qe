@@ -126,6 +126,13 @@ def perplexity_proxy(mean_lp: float) -> float:
     return math.exp(-mean_lp)
 
 
+def geometric_mean_prob(mean_lp: float) -> float:
+    """exp(mean_logprob), equivalent to geometric mean token probability."""
+    if math.isnan(mean_lp):
+        return float("nan")
+    return math.exp(mean_lp)
+
+
 def plausibility_score(
     mean_lp: float,
     anchors: list[tuple[float, float]] | None = None,
@@ -186,6 +193,24 @@ def token_entropy(tok: dict) -> float:
     return entropy
 
 
+def token_topk_kurtosis(tok: dict) -> float:
+    """Kurtosis over available top-k probabilities.
+
+    Inspired by token-distribution kurtosis in uncertainty visualisation work,
+    but computed only over the top-k alternatives returned by the server.
+    """
+    tops = tok.get("top_logprobs", [])
+    if len(tops) < 2:
+        return float("nan")
+    probs = [math.exp(t["logprob"]) for t in tops]
+    mean_p = sum(probs) / len(probs)
+    variance = sum((p - mean_p) ** 2 for p in probs) / len(probs)
+    if variance <= 0:
+        return 0.0
+    fourth = sum((p - mean_p) ** 4 for p in probs) / len(probs)
+    return fourth / (variance ** 2)
+
+
 def is_punctuation_or_function_word(tok: dict) -> bool:
     text = tok.get("token", "").strip().lower()
     if not text:
@@ -236,9 +261,12 @@ def content_token_summary(gen_tokens: list[dict]) -> dict[str, float | int]:
     if not content_tokens:
         return {
             "composite_score": 0.0,
+            "geometric_mean_prob": 0.0,
+            "mean_prob_all": 0.0,
             "mean_prob": 0.0,
             "min_lexical_prob": 0.0,
             "mean_top_entropy": 0.0,
+            "mean_topk_kurtosis": 0.0,
             "mean_margin": 0.0,
             "weak_share": 0.0,
             "ambiguous_share": 0.0,
@@ -248,9 +276,12 @@ def content_token_summary(gen_tokens: list[dict]) -> dict[str, float | int]:
             "ambiguous_count": 0,
         }
 
+    all_probs = [t["prob"] for t in gen_tokens]
     probs = [t["prob"] for t in content_tokens]
     lexical_probs = [t["prob"] for t in lexical_tokens]
     entropies = [token_entropy(t) for t in content_tokens]
+    kurtoses = [token_topk_kurtosis(t) for t in content_tokens]
+    kurtoses = [k for k in kurtoses if not math.isnan(k)]
     margins = [token_margin(t) for t in content_tokens if math.isfinite(token_margin(t))]
     weak_lexical_count = sum(is_low_confidence_token(t) for t in lexical_tokens)
     ambiguous_count = sum(is_ambiguous_token(t) for t in content_tokens)
@@ -266,9 +297,12 @@ def content_token_summary(gen_tokens: list[dict]) -> dict[str, float | int]:
     )
     return {
         "composite_score": composite,
+        "geometric_mean_prob": geometric_mean_prob(mean_logprob([t["logprob"] for t in gen_tokens])),
+        "mean_prob_all": sum(all_probs) / len(all_probs) if all_probs else 0.0,
         "mean_prob": mean_prob,
         "min_lexical_prob": min_prob,
         "mean_top_entropy": sum(entropies) / len(entropies) if entropies else 0.0,
+        "mean_topk_kurtosis": sum(kurtoses) / len(kurtoses) if kurtoses else 0.0,
         "mean_margin": sum(margins) / len(margins) if margins else float("inf"),
         "weak_share": weak_share,
         "ambiguous_share": ambiguous_share,
@@ -461,6 +495,7 @@ def format_signal_report(
     anchors = anchors or PLAUSIBILITY_ANCHORS
     summary = content_token_summary(gen_tokens)
     ppl = perplexity_proxy(mean_lp)
+    geom = geometric_mean_prob(mean_lp)
     score = plausibility_score(mean_lp, anchors)
     margin_s = (
         f"{summary['mean_margin']:.3f}"
@@ -473,6 +508,7 @@ def format_signal_report(
     lines.append("")
     lines.append("Aggregate signals")
     lines.append(f"  mean_logprob        {mean_lp:>8.3f}")
+    lines.append(f"  geometric_mean_prob {geom:>8.3f}      (exp(mean_logprob))")
     lines.append(f"  perplexity_proxy    {ppl:>8.3f}      (exp(-mean_logprob))")
     lines.append(
         f"  display_score       {score:>7.1f}%      "
@@ -487,9 +523,14 @@ def format_signal_report(
         "(0.50\u00b7mean_prob + 0.25\u00b7min_lexical_prob "
         "+ 0.15\u00b7(1\u2212weak_share) + 0.10\u00b7(1\u2212ambig_share))"
     )
+    lines.append(f"  mean_prob_all       {summary['mean_prob_all']:>8.3f}      (all scored tokens)")
     lines.append(f"  mean_prob           {summary['mean_prob']:>8.3f}")
     lines.append(f"  min_lexical_prob    {summary['min_lexical_prob']:>8.3f}")
     lines.append(f"  mean_top_entropy    {summary['mean_top_entropy']:>8.3f} nats")
+    lines.append(
+        f"  mean_topk_kurtosis  {summary['mean_topk_kurtosis']:>8.3f}      "
+        "(truncated to returned top_logprobs)"
+    )
     lines.append(f"  mean_margin         {margin_s:>8}      (top1\u2212top2 logprob)")
     lines.append(
         f"  weak_share          {summary['weak_share']:>8.3f}      "

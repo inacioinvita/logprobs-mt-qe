@@ -155,10 +155,11 @@ All thresholds the code uses internally are exposed as module constants in `mt.l
 
 This repo is intentionally a seed. The signals it exposes are the input to a much larger question: *how do we turn cheap model-internal uncertainty into helpful QE signal?* Concrete extension paths:
 
-1. **Calibration against human judgement.** Correlate `mean_logprob`, `min_logprob`, `mean_top_entropy`, and `composite_score` against MQM, DA, or post-edit effort on a held-out set. Learn band cutoffs instead of hand-picking them.
+1. **Calibration against human judgement.** Correlate `mean_logprob`, `geometric_mean_prob`, `mean_prob_all`, `min_logprob`, `mean_top_entropy`, `mean_topk_kurtosis`, and `composite_score` against MQM, DA, or post-edit effort on a held-out set. Learn band cutoffs instead of hand-picking them.
 2. **Per-model and per-language priors.** Logprob scales drift across models and language pairs; a per-pair recalibration (z-score or percentile mapping) is an obvious next step.
 3. **Length-bias correction.** `mean_logprob` rewards short translations. Try `mean_logprob / log(n_tokens)`, content-token-only means, or a length-conditioned regression.
-4. **Self-consistency / agreement.** Sample N translations at `temperature > 0`; measure agreement, BLEU/chrF among samples, or content-token disagreement. The agreement demo is wired but unused at the CLI surface.
+4. **Uncertainty visualisation.** Park et al. (2025), ["Visualizing Uncertainty in Translation Tasks"](https://arxiv.org/abs/2501.17187), evaluate geometric token probability, arithmetic token probability, and top-k kurtosis for MT confidence, then colour-code output tokens in a web UI. This repo now exposes the same family of signals where OpenAI-compatible logprob APIs allow it (`geometric_mean_prob`, `mean_prob_all`, `mean_topk_kurtosis`) and ships a static HTML demo.
+5. **Self-consistency / agreement.** Sample N translations at `temperature > 0`; measure agreement, BLEU/chrF among samples, or content-token disagreement. The agreement demo is wired but unused at the CLI surface.
 
 
 PRs and issues exploring any of these are welcome — see [`CONTRIBUTING.md`](CONTRIBUTING.md).
@@ -174,6 +175,7 @@ Runnable offline against included sample data — no server needed.
 | Script | Shows |
 |--------|-------|
 | `translate_with_confidence.py` | Full signal report from generation logprobs |
+| `visual_confidence_html.py` | Static HTML token-confidence heatmap |
 
 **QE demos** (`demos/qe/`):
 
