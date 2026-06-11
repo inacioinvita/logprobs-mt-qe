@@ -78,10 +78,10 @@ def score_hypothesis(
         timeout=timeout,
         n=n,
     )
-    tokens, agg = scores_from_response(
+    tokens, agg, positions = scores_from_response(
         data, marker=marker, hypothesis=hypothesis
     )
-    return {"response": data, "tokens": tokens, "aggregates": agg}
+    return {"response": data, "tokens": tokens, "aggregates": agg, "positions": positions}
 
 
 def main() -> int:
@@ -149,7 +149,7 @@ def main() -> int:
             file=sys.stderr,
         )
 
-    print_score_report(tokens, agg, label="live score")
+    print_score_report(tokens, agg, label="live score", positions=result.get("positions"))
     return 0 if tokens else 1
 
 

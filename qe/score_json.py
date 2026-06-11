@@ -40,7 +40,7 @@ def main() -> int:
         print(f"ERROR: invalid JSON: {exc}", file=sys.stderr)
         return 1
 
-    hypothesis, agg = scores_from_response(
+    hypothesis, agg, positions = scores_from_response(
         data, marker=args.marker, hypothesis=args.hypothesis
     )
     if not hypothesis:
@@ -49,7 +49,7 @@ def main() -> int:
             file=sys.stderr,
         )
 
-    print_score_report(hypothesis, agg, label=args.response_json.name)
+    print_score_report(hypothesis, agg, label=args.response_json.name, positions=positions)
     return 0 if hypothesis else 1
 
 

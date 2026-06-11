@@ -40,18 +40,21 @@ def prompt_token_from_position(pos: dict[str, Any] | None) -> tuple[str, float] 
     return rank1_from_position(pos)
 
 
-def align_hypothesis_tokens(
+def _align_hypothesis_walk(
     prompt_logprobs: list[Any],
     hypothesis: str,
     marker_end: int,
-) -> list[tuple[str, float]]:
+) -> list[tuple[str, float, dict[str, Any] | None]]:
     """
     Walk prompt positions after *marker_end*; at each step pick the candidate
     decoded_token that matches the longest prefix of the remaining hypothesis.
+
+    Returns (token, logprob, position_dict) triples. *position_dict* retains the
+    full vLLM top-k mass at that step for entropy / kurtosis signals.
     """
     # vLLM often tokenises " translation: Der" with a leading space on the first target token.
     remaining = hypothesis if hypothesis[:1].isspace() else f" {hypothesis.lstrip()}"
-    out: list[tuple[str, float]] = []
+    out: list[tuple[str, float, dict[str, Any] | None]] = []
 
     for i in range(marker_end + 1, len(prompt_logprobs)):
         if not remaining:
@@ -82,10 +85,19 @@ def align_hypothesis_tokens(
         if match_tok is None:
             break
 
-        out.append((match_tok, match_lp))
+        out.append((match_tok, match_lp, pos))
         remaining = remaining[len(match_tok) :]
 
     return out
+
+
+def align_hypothesis_tokens(
+    prompt_logprobs: list[Any],
+    hypothesis: str,
+    marker_end: int,
+) -> list[tuple[str, float]]:
+    """Aligned hypothesis tokens as (token, logprob) pairs."""
+    return [(tok, lp) for tok, lp, _ in _align_hypothesis_walk(prompt_logprobs, hypothesis, marker_end)]
 
 
 def iter_prompt_tokens(
@@ -242,6 +254,13 @@ def _trim_at_junk(hypothesis: list[tuple[str, float]]) -> list[tuple[str, float]
     return trimmed
 
 
+def geometric_mean_prob(mean_lp: float) -> float:
+    """exp(mean_logprob), equivalent to geometric mean token probability."""
+    if math.isnan(mean_lp):
+        return float("nan")
+    return math.exp(mean_lp)
+
+
 def aggregate_scores(logprobs: list[float]) -> dict[str, float | int]:
     """Summary statistics over hypothesis token logprobs."""
     if not logprobs:
@@ -249,20 +268,38 @@ def aggregate_scores(logprobs: list[float]) -> dict[str, float | int]:
             "mean_logprob": float("nan"),
             "sum_logprob": float("nan"),
             "perplexity_proxy": float("nan"),
+            "geometric_mean_prob": float("nan"),
+            "mean_prob_all": float("nan"),
+            "mean_topk_kurtosis": float("nan"),
             "n_tokens": 0,
             "min_logprob": float("nan"),
             "max_logprob": float("nan"),
         }
     n = len(logprobs)
     mean = sum(logprobs) / n
+    probs = [math.exp(lp) for lp in logprobs]
     return {
         "mean_logprob": mean,
         "sum_logprob": sum(logprobs),
         "perplexity_proxy": math.exp(-mean),
+        "geometric_mean_prob": geometric_mean_prob(mean),
+        "mean_prob_all": sum(probs) / n,
+        "mean_topk_kurtosis": float("nan"),
         "n_tokens": n,
         "min_logprob": min(logprobs),
         "max_logprob": max(logprobs),
     }
+
+
+def segment_qe_score(agg: dict[str, float | int]) -> float:
+    """Canonical one-number QE score for segment triage and candidate ranking.
+
+    Returns ``mean_logprob`` over aligned hypothesis tokens. ``geometric_mean_prob``
+    and ``mean_prob_all`` are monotone transforms of the same underlying signal on
+    a fixed segment; use them for dashboards, not as a different ranking axis.
+    Break ties with ``min_logprob`` (see ``compare_candidates.py``).
+    """
+    return float(agg["mean_logprob"])
 
 
 def top_logprobs_from_position(pos: dict[str, Any] | None) -> list[tuple[str, float, int]]:
@@ -304,6 +341,39 @@ def margin_top1_top2(pos: dict[str, Any] | None) -> float | None:
     if len(tops) < 2:
         return None
     return tops[0][1] - tops[1][1]
+
+
+def token_topk_kurtosis(pos: dict[str, Any] | None) -> float:
+    """Kurtosis over available top-k probabilities at one prompt position.
+
+    Computed only over the top-k alternatives returned by the server (truncated
+    compared with full-vocabulary kurtosis in uncertainty-visualisation papers).
+    """
+    tops = top_logprobs_from_position(pos)
+    if len(tops) < 2:
+        return float("nan")
+    probs = [math.exp(lp) for _, lp, _ in tops]
+    mean_p = sum(probs) / len(probs)
+    variance = sum((p - mean_p) ** 2 for p in probs) / len(probs)
+    if variance <= 0:
+        return 0.0
+    fourth = sum((p - mean_p) ** 4 for p in probs) / len(probs)
+    return fourth / (variance ** 2)
+
+
+def aggregate_position_scores(
+    positions: list[dict[str, Any] | None],
+) -> dict[str, float]:
+    """Top-k distributional summaries over aligned hypothesis positions."""
+    kurtoses = [
+        token_topk_kurtosis(pos)
+        for pos in positions
+        if pos is not None
+    ]
+    kurtoses = [k for k in kurtoses if not math.isnan(k)]
+    return {
+        "mean_topk_kurtosis": sum(kurtoses) / len(kurtoses) if kurtoses else float("nan"),
+    }
 
 
 def find_low_confidence_spans(
@@ -360,25 +430,46 @@ def scores_from_response(
     marker: str,
     *,
     hypothesis: str | None = None,
-) -> tuple[list[tuple[str, float]], dict[str, float | int]]:
-    hypothesis_tokens = extract_hypothesis_tokens(
-        prompt_logprobs_from_response(data),
-        marker=marker,
-        hypothesis=hypothesis,
-    )
+) -> tuple[list[tuple[str, float]], dict[str, float | int], list[dict[str, Any] | None]]:
+    prompt_logprobs = prompt_logprobs_from_response(data)
+    if hypothesis is not None and prompt_logprobs:
+        marker_end = _find_marker_end_index(prompt_logprobs, marker)
+        if marker_end >= 0:
+            aligned = _align_hypothesis_walk(prompt_logprobs, hypothesis, marker_end)
+            hypothesis_tokens = [(tok, lp) for tok, lp, _ in aligned]
+            positions = [pos for _, _, pos in aligned]
+        else:
+            hypothesis_tokens = []
+            positions = []
+    else:
+        hypothesis_tokens = extract_hypothesis_tokens(
+            prompt_logprobs,
+            marker=marker,
+            hypothesis=hypothesis,
+        )
+        positions = []
+
     logprobs = [lp for _, lp in hypothesis_tokens]
-    return hypothesis_tokens, aggregate_scores(logprobs)
+    agg = aggregate_scores(logprobs)
+    if positions:
+        agg.update(aggregate_position_scores(positions))
+    return hypothesis_tokens, agg, positions
 
 
 def format_aggregate_line(agg: dict[str, float | int]) -> str:
-    return (
-        f"mean_logprob={agg['mean_logprob']:.6f}  "
-        f"sum_logprob={agg['sum_logprob']:.6f}  "
-        f"perplexity_proxy={agg['perplexity_proxy']:.6f}  "
-        f"n_tokens={agg['n_tokens']}  "
-        f"min_logprob={agg['min_logprob']:.6f}  "
-        f"max_logprob={agg['max_logprob']:.6f}"
-    )
+    parts = [
+        f"mean_logprob={agg['mean_logprob']:.6f}",
+        f"geometric_mean_prob={agg['geometric_mean_prob']:.6f}",
+        f"mean_prob_all={agg['mean_prob_all']:.6f}",
+        f"sum_logprob={agg['sum_logprob']:.6f}",
+        f"perplexity_proxy={agg['perplexity_proxy']:.6f}",
+        f"n_tokens={agg['n_tokens']}",
+        f"min_logprob={agg['min_logprob']:.6f}",
+        f"max_logprob={agg['max_logprob']:.6f}",
+    ]
+    if "mean_topk_kurtosis" in agg and not math.isnan(float(agg["mean_topk_kurtosis"])):
+        parts.insert(4, f"mean_topk_kurtosis={agg['mean_topk_kurtosis']:.6f}")
+    return "  ".join(parts)
 
 
 def print_score_report(
@@ -386,6 +477,7 @@ def print_score_report(
     agg: dict[str, float | int],
     *,
     label: str | None = None,
+    positions: list[dict[str, Any] | None] | None = None,
 ) -> None:
     if label:
         print(f"=== {label} ===")
@@ -393,9 +485,21 @@ def print_score_report(
         print(f"hypothesis: {hypothesis_text(hypothesis)!r}")
     print(format_aggregate_line(agg))
     print()
-    print(f"{'idx':>4}  {'token':<24}  {'logprob':>12}  {'prob':>12}")
-    print("-" * 56)
+    print(
+        f"{'idx':>4}  {'token':<24}  {'logprob':>12}  {'prob':>12}  "
+        f"{'margin':>8}  {'entropy':>9}  {'kurtosis':>9}"
+    )
+    print("-" * 88)
     for i, (tok, lp) in enumerate(hypothesis):
         prob = math.exp(lp)
         display = repr(tok)[1:-1]
-        print(f"{i:4d}  {display:<24}  {lp:12.6f}  {prob:12.6f}")
+        pos = positions[i] if positions and i < len(positions) else None
+        margin = margin_top1_top2(pos)
+        margin_disp = f"{margin:.3f}" if margin is not None else "\u2014"
+        ent = token_entropy(pos)
+        kurt = token_topk_kurtosis(pos)
+        kurt_disp = f"{kurt:.3f}" if not math.isnan(kurt) else "\u2014"
+        print(
+            f"{i:4d}  {display:<24}  {lp:12.6f}  {prob:12.6f}  "
+            f"{margin_disp:>8}  {ent:9.3f}  {kurt_disp:>9}"
+        )

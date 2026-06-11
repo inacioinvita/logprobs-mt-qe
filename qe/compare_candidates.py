@@ -16,6 +16,7 @@ from qe.lib_prompt_logprobs import (
     format_aggregate_line,
     hypothesis_text,
     scores_from_response,
+    segment_qe_score,
 )
 from qe.score_live import score_hypothesis
 
@@ -84,7 +85,7 @@ def main() -> int:
             return 1
         for path in sorted(json_dir.glob("*.json")):
             data = json.loads(path.read_text(encoding="utf-8"))
-            hypothesis, agg = scores_from_response(data, marker=args.marker)
+            hypothesis, agg, _positions = scores_from_response(data, marker=args.marker)
             rows.append((path.stem, agg, hypothesis_text(hypothesis)))
     else:
         if not args.source:
@@ -114,7 +115,10 @@ def main() -> int:
         print("ERROR: no candidates to compare", file=sys.stderr)
         return 1
 
-    rows.sort(key=lambda r: r[1]["mean_logprob"], reverse=True)
+    rows.sort(
+        key=lambda r: (segment_qe_score(r[1]), r[1]["min_logprob"]),
+        reverse=True,
+    )
 
     print(f"{'rank':>4}  {'label':<20}  {'mean_lp':>10}  {'min_lp':>10}  {'ppl_proxy':>10}  {'n_tok':>6}  hypothesis")
     print("-" * 112)
